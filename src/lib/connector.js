@@ -8,7 +8,7 @@ import { UpdateType } from '@powersync/react-native';
 import { supabase } from './supabase';
 
 const POWERSYNC_URL =
-  process.env.EXPO_PUBLIC_POWERSYNC_URL || '';
+  process.env.EXPO_PUBLIC_POWERSYNC_URL || 'https://69d81f100e377e689729db98.powersync.journeyapps.com';
 
 // Fatal Supabase errors that should not be retried (discard the transaction)
 const FATAL_CODES = [

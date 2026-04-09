@@ -17,7 +17,7 @@ import { fmtD } from '../lib/utils';
 export default function JobListScreen({ navigation }) {
   const status = useStatus();
   const { data: jobs, isLoading } = useQuery(
-    `SELECT * FROM call_log WHERE status IN ('mobilized', 'in_progress') ORDER BY start_date ASC`
+    `SELECT * FROM call_log WHERE stage = 'mobilized' OR stage = 'in_progress' ORDER BY date ASC`
   );
 
   return (
@@ -71,17 +71,16 @@ export default function JobListScreen({ navigation }) {
                   </View>
                 )}
               </View>
-              {item.job_number ? (
-                <Text style={styles.jobNumber}>#{item.job_number}</Text>
+              {item.display_job_number ? (
+                <Text style={styles.jobNumber}>#{item.display_job_number}</Text>
               ) : null}
               <Text style={styles.address} numberOfLines={1}>
-                {[item.address, item.city, item.state]
+                {[item.jobsite_address, item.jobsite_city, item.jobsite_state]
                   .filter(Boolean)
                   .join(', ')}
               </Text>
               <Text style={styles.dates}>
-                {fmtD(item.start_date)}
-                {item.end_date ? ` — ${fmtD(item.end_date)}` : ''}
+                {fmtD(item.date)}
               </Text>
             </TouchableOpacity>
           )}

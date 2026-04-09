@@ -10,12 +10,18 @@ import {
   TouchableOpacity,
   StyleSheet,
 } from 'react-native';
+import { useQuery } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
 import { fmtD, tod } from '../lib/utils';
 
 export default function WelcomeScreen({ navigation, route }) {
-  const { userName, jobCount } = route.params || {};
+  const { userName } = route.params || {};
   const firstName = userName ? userName.split(' ')[0] : 'Crew';
+
+  const { data: jobCountRows } = useQuery(
+    `SELECT COUNT(*) as cnt FROM call_log WHERE stage = 'mobilized' OR stage = 'in_progress'`
+  );
+  const jobCount = jobCountRows?.[0]?.cnt ?? 0;
   const today = new Date();
   const dayOfWeek = today.toLocaleDateString('en-US', { weekday: 'long' });
 

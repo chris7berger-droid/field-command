@@ -12,18 +12,19 @@ import ReportTab from './tabs/ReportTab';
 const TAB_KEYS = ['TimeClock', 'Tasks', 'Report'];
 const TAB_LABELS = ['TIME CLOCK', 'TASKS', 'REPORT'];
 
-export default function JobDetailScreen({ route, navigation }) {
+export default function JobDetailScreen({ route, navigation, user }) {
   const { jobId, jobName } = route.params;
+  const employeeId = user?.id || '';
   const [activeTab, setActiveTab] = useState('TimeClock');
 
   const renderTab = () => {
     switch (activeTab) {
       case 'TimeClock':
-        return <TimeClockTab jobId={jobId} jobName={jobName} />;
+        return <TimeClockTab jobId={jobId} jobName={jobName} employeeId={employeeId} />;
       case 'Tasks':
         return <TasksTab jobId={jobId} />;
       case 'Report':
-        return <ReportTab jobId={jobId} />;
+        return <ReportTab jobId={jobId} employeeId={employeeId} />;
       default:
         return null;
     }

@@ -12,7 +12,7 @@ import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
 import { parseJSON, fmtPct, fmtHrs, tod } from '../../lib/utils';
 
-export default function ReportTab({ jobId }) {
+export default function ReportTab({ jobId, employeeId }) {
   const db = usePowerSync();
   const today = tod();
 
@@ -123,8 +123,8 @@ export default function ReportTab({ jobId }) {
 
   function buildReportData(status) {
     return {
-      job_id: jobId, wtc_id: wtc?.id || '', tenant_id: wtc?.tenant_id || '',
-      report_date: today, submitted_by: '',
+      job_id: jobId, wtc_id: wtc?.id || '',
+      report_date: today, submitted_by: employeeId,
       tasks: JSON.stringify(taskEntries), materials_used: JSON.stringify(materialEntries),
       hours_regular: hours.regular, hours_ot: hours.ot,
       photos: JSON.stringify(photos), notes: notes.trim(), status,
@@ -141,8 +141,8 @@ export default function ReportTab({ jobId }) {
     } else {
       const id = generateId();
       await db.execute(
-        `INSERT INTO daily_production_reports (id,job_id,wtc_id,tenant_id,report_date,submitted_by,tasks,materials_used,hours_regular,hours_ot,photos,notes,status,synced,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)`,
-        [id, data.job_id, data.wtc_id, data.tenant_id, data.report_date, data.submitted_by, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, data.created_at]
+        `INSERT INTO daily_production_reports (id,job_id,wtc_id,report_date,submitted_by,tasks,materials_used,hours_regular,hours_ot,photos,notes,status,synced,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?)`,
+        [id, data.job_id, data.wtc_id, data.report_date, data.submitted_by, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, data.created_at]
       );
     }
   }

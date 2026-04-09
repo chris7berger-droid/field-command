@@ -15,6 +15,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Modal,
+  Alert,
   StyleSheet,
   Vibration,
 } from 'react-native';
@@ -47,7 +48,7 @@ const STANDARD_STEPS = [
   { id: 'clock_out',   punch: 'clock_out',   label: 'CLOCK OUT',   hint: 'Tap to end your shift' },
 ];
 
-export default function TimeClockTab({ jobId, jobName }) {
+export default function TimeClockTab({ jobId, jobName, employeeId }) {
   const db = usePowerSync();
 
   // ── State ─────────────────────────────────────────────
@@ -161,9 +162,8 @@ export default function TimeClockTab({ jobId, jobName }) {
     if (demoMode) {
       position = demoOnSite ? DEMO_POSITIONS.onSite : DEMO_POSITIONS.offSite;
     } else {
-      position = await getCurrentPosition();
+      position = await getCurrentPosition(); // throws if denied
     }
-    if (!position) return { onSite: true, position: null, weatherData: null };
     const geo = checkGeofence(position, job);
     setIsOnSite(geo.onSite);
     setGpsDistance(geo.distanceMeters);
@@ -176,11 +176,11 @@ export default function TimeClockTab({ jobId, jobName }) {
   const writePunch = useCallback(async (type, position, weatherData, gpsOverride = false) => {
     const id = generateId();
     await db.execute(
-      `INSERT INTO time_punches (id, job_id, employee_id, tenant_id, punch_type, punch_time, punch_date,
+      `INSERT INTO time_punches (id, job_id, employee_id, punch_type, punch_time, punch_date,
         latitude, longitude, on_site, gps_override, weather_temp, weather_condition, synced, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
       [
-        id, jobId, '', job?.tenant_id || '', type,
+        id, jobId, employeeId, type,
         new Date().toISOString(), tod(),
         position?.latitude || null, position?.longitude || null,
         position ? (gpsOverride ? 0 : 1) : 1,
@@ -189,7 +189,7 @@ export default function TimeClockTab({ jobId, jobName }) {
         new Date().toISOString(),
       ]
     );
-  }, [db, jobId, job]);
+  }, [db, jobId, employeeId]);
 
   // ── Advance step ──────────────────────────────────────
   const advanceStep = useCallback(() => {
@@ -199,7 +199,17 @@ export default function TimeClockTab({ jobId, jobName }) {
   // ── Execute current step ──────────────────────────────
   const executeStep = useCallback(async (gpsOverride = false) => {
     if (!currentStep || !currentStep.label) return;
-    const { position, weatherData, onSite } = await checkGPS();
+    let gpsResult;
+    try {
+      gpsResult = await checkGPS();
+    } catch (e) {
+      if (e.message === 'LOCATION_DENIED') {
+        Alert.alert('Location Required', 'GPS location is required to clock in. Please enable location access in Settings.');
+        return;
+      }
+      throw e;
+    }
+    const { position, weatherData, onSite } = gpsResult;
 
     if (currentStep.punch === 'clock_in' && !onSite && !gpsOverride) {
       pendingAction.current = () => executeStep(true);
@@ -221,7 +231,16 @@ export default function TimeClockTab({ jobId, jobName }) {
   // ── Confirm clock out ─────────────────────────────────
   const confirmClockOut = useCallback(async () => {
     setShowClockOutModal(false);
-    const { position, weatherData } = await checkGPS();
+    let position, weatherData;
+    try {
+      ({ position, weatherData } = await checkGPS());
+    } catch (e) {
+      if (e.message === 'LOCATION_DENIED') {
+        Alert.alert('Location Required', 'GPS location is required to clock out. Please enable location access in Settings.');
+        return;
+      }
+      throw e;
+    }
     await writePunch('clock_out', position, weatherData);
     Vibration.vibrate([100, 50, 100]);
     advanceStep();

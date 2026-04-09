@@ -8,11 +8,14 @@ import * as Location from 'expo-location';
 
 /**
  * Request location permissions and get current position.
- * Returns { latitude, longitude } or null if denied.
+ * Throws if permission denied — GPS is mandatory for punching.
+ * Returns { latitude, longitude }.
  */
 export async function getCurrentPosition() {
   const { status } = await Location.requestForegroundPermissionsAsync();
-  if (status !== 'granted') return null;
+  if (status !== 'granted') {
+    throw new Error('LOCATION_DENIED');
+  }
 
   const loc = await Location.getCurrentPositionAsync({
     accuracy: Location.Accuracy.High,

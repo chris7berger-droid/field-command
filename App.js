@@ -80,7 +80,7 @@ export default function App() {
     // Try team_members first (Command Suite shared table)
     const { data: tm } = await supabase
       .from('team_members')
-      .select('name, email, role')
+      .select('id, name, email, role')
       .eq('email', email)
       .single();
 
@@ -155,7 +155,9 @@ export default function App() {
             <Stack.Screen name="JobList">
               {(props) => <JobListScreen {...props} user={user} />}
             </Stack.Screen>
-            <Stack.Screen name="JobDetail" component={JobDetailScreen} />
+            <Stack.Screen name="JobDetail">
+              {(props) => <JobDetailScreen {...props} user={user} />}
+            </Stack.Screen>
           </Stack.Navigator>
         </NavigationContainer>
       </View>

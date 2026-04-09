@@ -1,0 +1,133 @@
+FC_Handoff_v2 — April 9, 2026
+Session: PowerSync pipeline, employee_id, schema alignment, GPS enforcement
+
+===============================================================================
+WHAT WAS DONE
+===============================================================================
+
+1. PowerSync Cloud — full setup
+   - Account: chris7berger-droid on dashboard.powersync.com
+   - Project: Field Command (Development instance, US region)
+   - Database connection: db.pbgvgjjuhnpsumnowuym.supabase.co (postgres)
+   - Instance URL: https://69d81f100e377e689729db98.powersync.journeyapps.com
+   - Client Auth: Supabase Auth enabled (JWT secret configured)
+   - Sync Streams (edition 3, deployed):
+     - call_log (stage = 'mobilized' OR 'in_progress')
+     - proposal_wtc
+     - team_members (active = true)
+     - time_punches
+     - daily_production_reports
+
+2. Supabase schema — two new tables created in production
+   - time_punches: UUID PK, job_id (integer FK → call_log), employee_id (UUID FK → team_members),
+     punch_type, punch_time (timestamptz), punch_date (date), GPS fields, weather, hours
+   - daily_production_reports: UUID PK, job_id (integer FK), wtc_id (UUID FK → proposal_wtc),
+     submitted_by (UUID FK → team_members), tasks/materials/photos (JSONB), status
+   - Publication "powersync" created for all 5 tables
+
+3. Local PowerSync schema (schema.js) — complete rewrite
+   - Aligned all columns to match actual Supabase schema
+   - Removed phantom tenant_id (DB is single-tenant)
+   - Corrected types: boolean → integer (SQLite), jsonb → text, etc.
+   - call_log: uses actual columns (stage, jobsite_address, etc.)
+
+4. employee_id wiring — end-to-end
+   - App.js: loadUser() now fetches team_members.id
+   - User object (with id) passed through navigation to JobDetailScreen
+   - JobDetailScreen passes employeeId to TimeClockTab and ReportTab
+   - TimeClockTab.writePunch() writes real employee_id (was empty string)
+   - ReportTab.buildReportData() writes real submitted_by (was empty string)
+   - VERIFIED: punch synced to Supabase with employee_id populated
+
+5. Query fixes — matched to actual DB column names
+   - JobListScreen: status → stage, address → jobsite_address, start_date → date
+   - WelcomeScreen: job count now queries PowerSync live (was hardcoded 0)
+   - Sync stream: uses stage = 'mobilized' OR stage = 'in_progress' (not IN())
+
+6. GPS enforcement — location is mandatory
+   - getCurrentPosition() throws LOCATION_DENIED if permission not granted
+   - executeStep() and confirmClockOut() catch error and show Alert
+   - Crew cannot punch without GPS — no workaround
+   - Previous behavior (warn + flag) replaced with hard block
+
+7. Test data — one job mobilized
+   - call_log id=48 (SCSD Elementary School Virginia City) set to stage='mobilized'
+   - Verified: synced to device, visible in job list, punches flow back to Supabase
+
+===============================================================================
+DATA PIPELINE (VERIFIED END-TO-END)
+===============================================================================
+
+Supabase (postgres) → PowerSync Cloud → PowerSync SDK (device SQLite) → UI
+                    ← uploadData (connector.js) ← local writes (punches/reports)
+
+Confirmed: clock_in punch created on device → synced to Supabase time_punches
+table with correct employee_id, job_id, GPS coordinates, and on_site flag.
+
+===============================================================================
+FILES CHANGED
+===============================================================================
+
+App.js                              — Fetch team_members.id, pass user to JobDetail
+src/lib/connector.js                — PowerSync instance URL wired in
+src/lib/location.js                 — GPS now mandatory (throws on denial)
+src/lib/schema.js                   — Complete rewrite to match actual Supabase schema
+src/screens/JobDetailScreen.js      — Accepts user prop, passes employeeId to tabs
+src/screens/JobListScreen.js        — Fixed column references (stage, jobsite_*, date)
+src/screens/WelcomeScreen.js        — Live job count query from PowerSync
+src/screens/tabs/ReportTab.js       — Uses employeeId for submitted_by, removed tenant_id
+src/screens/tabs/TimeClockTab.js    — Uses employeeId, GPS enforcement with Alert
+
+===============================================================================
+KNOWN ISSUES / NOT YET DONE
+===============================================================================
+
+1. Prevailing wage flag — call_log doesn't have prevailing_wage column
+   - PW flag lives on proposal_wtc, need to join or add column to call_log
+   - Currently isPW always false (doesn't crash, just no PW drive flow)
+
+2. Job geofence — call_log doesn't have lat/lng/geofence_radius columns
+   - Need to add GPS columns to call_log or pull from a separate table
+   - Currently geofence check returns onSite=true (no blocking)
+
+3. Photo upload to Supabase Storage not wired
+   - Photos save as local URIs, not uploaded to storage bucket
+
+4. No sign-out button yet
+
+5. Sync stream filters all data to all users (single-tenant global bucket)
+   - Fine for now, needs per-user filtering when multi-tenant
+
+6. PowerSync URL hardcoded in connector.js (should use env var for prod)
+
+7. Standalone web dashboard not started
+
+===============================================================================
+NEXT PRIORITIES
+===============================================================================
+
+1. Add geofence columns to call_log (latitude, longitude, geofence_radius)
+2. Wire prevailing wage from proposal_wtc to job detail
+3. Photo upload to Supabase Storage
+4. Sign-out button
+5. Per-crew job filtering (assignments table)
+6. Web dashboard scaffold
+
+===============================================================================
+POWERSYNC CLOUD ACCESS
+===============================================================================
+
+Dashboard: https://dashboard.powersync.com
+Org: chris7berger-droid
+Project: Field Command
+Instance: Development (US)
+Instance URL: https://69d81f100e377e689729db98.powersync.journeyapps.com
+
+===============================================================================
+PRODUCTION
+===============================================================================
+
+GitHub: chris7berger-droid/field-command (main branch)
+Local: ~/field-command
+Build: npx expo run:ios
+Requires: Xcode 26.4 + iOS 26.4 Simulator runtime
