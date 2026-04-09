@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "field-command",
+    "name": "Field Command",
     "slug": "field-command",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -10,20 +10,36 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#1c1814"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": false,
+      "bundleIdentifier": "com.hdsp.fieldcommand",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Field Command uses your location to verify you are on the job site when clocking in and out.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Field Command uses your location to verify you are on the job site.",
+        "NSCameraUsageDescription": "Field Command uses the camera to capture job site photos for daily production reports.",
+        "NSPhotoLibraryUsageDescription": "Field Command accesses your photo library to attach job site photos to daily production reports."
+      }
     },
     "android": {
+      "package": "com.hdsp.fieldcommand",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#1c1814"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA"
+      ]
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    }
+    "plugins": [
+      "expo-font",
+      "expo-location",
+      "expo-camera",
+      "expo-image-picker"
+    ]
   }
 }

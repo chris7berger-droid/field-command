@@ -1,0 +1,200 @@
+FC_Handoff_v1 — April 9, 2026
+Session: Initial build — scaffold, auth, time clock, tasks, daily report
+
+===============================================================================
+WHAT WAS DONE
+===============================================================================
+
+1. Project scaffold — Expo SDK 54, React Native 0.81
+   - PowerSync + Supabase wiring (offline-first SQLite ↔ Supabase)
+   - @powersync/op-sqlite adapter (OPSqliteOpenFactory)
+   - Design tokens matching Command Suite palette (parchment/linen, Barlow fonts)
+   - Shared Supabase backend (pbgvgjjuhnpsumnowuym.supabase.co)
+
+2. Auth + Welcome Screen
+   - Supabase email/password auth (shared with Sales/Schedule/AR Command)
+   - User lookup: team_members → crew → email fallback
+   - Crew name format: "Last, First" flipped to "First Last" for display
+   - Welcome screen: user's first name, day of week, date, job count, "VIEW MY JOBS"
+
+3. PunchStatusBar — persistent header on every screen
+   - Shows current punch state: CLOCKED OUT / DRIVING / ON SITE / ON LUNCH / SHIFT COMPLETE
+   - Color-coded: gray (out), purple (driving), teal (on site), amber (lunch), green (done)
+   - Elapsed time since last punch, ticks every second
+   - Reads all today's punches from time_punches table
+
+4. Job List Screen
+   - Queries call_log for mobilized/in_progress jobs
+   - Shows job name, number, address, dates, PW badge
+   - Sync status indicator (Synced / Offline)
+
+5. Job Detail Screen with 3 tabs
+   - Custom tab bar (TIME CLOCK / TASKS / REPORT)
+   - Back navigation to job list
+
+6. Time Clock — sequential punch flow
+   - PW jobs ask: Company Vehicle or Personal Vehicle?
+   - Company Vehicle flow (7 steps): Drive To → Arrive Site → Clock In → Lunch → Clock Out → Drive From → Arrive Home
+   - Personal Vehicle / Regular flow (3 steps): Clock In → Lunch → Clock Out
+   - One big button per step with hint text
+   - Progress dots showing position in sequence
+   - Locked 30-min lunch with countdown timer (15s in demo mode)
+   - Auto-punch-back-in when lunch ends
+   - GPS geofence: warn + flag, never block
+   - Weather capture at punch (Open-Meteo, free, no API key)
+   - Clock out confirmation modal with no-lunch warning
+   - Geofence warning modal with override option
+   - Demo mode toggle (simulates on-site/off-site, short lunch timer)
+   - Punch history with off-site badges
+   - State restoration from existing punches (survives app restart)
+
+7. Tasks Tab — daily task view
+   - Reads proposal_wtc.field_sow (synced from Sales Command, read-only)
+   - Horizontal day selector pills
+   - Task cards with description, % target, progress bar
+   - Materials list with qty_planned
+   - Production target card (total scope from WTC size/unit)
+   - Field SOW structure matches actual WTC Calculator output:
+     { id, day_label, crew_count, hours_planned,
+       tasks: [{ id, description, pct_complete }],
+       materials: [{ name, qty_planned }] }
+
+8. Report Tab — Daily Production Report submission
+   - Job Lead submits one report per job per day
+   - Hours auto-pulled from time clock punches (regular/OT)
+   - Tasks pre-populated from Field SOW, % Today + Cumulative % inputs
+   - Materials pre-populated from Field SOW, qty input
+   - Photos: take photo or pick from library, long-press to remove
+   - Notes: required field, blocks submit if empty
+   - Save Draft / Submit Report buttons
+   - Submitted state shows status (PENDING REVIEW / APPROVED)
+   - Writes to daily_production_reports table
+
+===============================================================================
+RESOLVED DESIGN DECISIONS
+===============================================================================
+
+- Daily Production Report submitted by Job Lead only (not every crew member)
+- Photos: general array on report (not per-task), notes required
+- One report per job — two jobs = two separate reports
+- Geofence: warn + flag, never block
+- Lunch: locked 30 min, auto-punch-back-in
+- Primary action color: teal (#30cfac) on dark (#1c1814)
+- Drive time: optional, only on PW jobs with company vehicle
+- PW drive flow: explicit punches for every transition (clean records)
+- Field Command will be a standalone product (mobile + web dashboard)
+- Web dashboard needed for office/admin to manage crews, review reports, export payroll
+
+===============================================================================
+POWERSYNC SCHEMA
+===============================================================================
+
+Read-only (sync down):
+  - call_log — mobilized jobs (name, address, GPS, geofence, PW flag)
+  - proposal_wtc — WTC data including field_sow (JSON stored as text)
+  - team_members — crew roster
+
+Read-write (sync up):
+  - time_punches — clock in/out, lunch, drive, GPS, weather
+  - daily_production_reports — end-of-shift submission
+
+Indexes:
+  - time_punches: (job_id, punch_date)
+  - daily_production_reports: (job_id, report_date)
+
+===============================================================================
+FILES
+===============================================================================
+
+App.js                              — Auth flow, PowerSync provider, PunchStatusBar, navigation
+babel.config.js                     — Async generator polyfill for PowerSync
+app.json                            — Expo config, iOS/Android permissions (GPS, camera, photos)
+
+src/components/
+  PunchStatusBar.js                 — Persistent punch status header
+
+src/lib/
+  tokens.js                         — C (colors), F (fonts), S (spacing), COMMON styles
+  schema.js                         — PowerSync schema (5 tables)
+  supabase.js                       — Supabase client
+  connector.js                      — PowerSync ↔ Supabase connector
+  powersync.js                      — DB singleton with OPSqliteOpenFactory
+  utils.js                          — fmt$, fmtD, fmtTime, parseJSON, fmtHrs, fmtPct, inits
+  location.js                       — GPS permissions, geofence (Haversine), demo positions
+  weather.js                        — Open-Meteo weather fetch
+
+src/screens/
+  LoginScreen.js                    — Email/password auth
+  WelcomeScreen.js                  — Welcome + job count + VIEW MY JOBS
+  JobListScreen.js                  — Mobilized jobs list
+  JobDetailScreen.js                — Tab container (Time Clock / Tasks / Report)
+
+src/screens/tabs/
+  TimeClockTab.js                   — Sequential punch flow (~500 lines)
+  TasksTab.js                       — Field SOW day plan viewer
+  ReportTab.js                      — Daily Production Report form
+
+===============================================================================
+KNOWN ISSUES / NOT YET DONE
+===============================================================================
+
+1. Job list shows 0 jobs — no jobs assigned in Supabase yet
+   - Need to either: create test data in Supabase, or build the admin job
+     management screen (standalone web dashboard)
+
+2. PowerSync sync rules not configured on PowerSync Cloud
+   - Schema is defined locally but sync streams (server-side YAML) not set up
+   - Need PowerSync Cloud account + project + sync rules pointing at Supabase
+
+3. employee_id not populated on punches/reports
+   - Auth works but we need to map session user → team_members.id or crew.name
+   - Currently writes empty string for employee_id and submitted_by
+
+4. Welcome screen job count hardcoded to 0
+   - Needs to query assignments table for today's date + crew name
+
+5. Photo upload to Supabase Storage not wired
+   - Photos save as local URIs, not uploaded to storage bucket
+   - Need: create storage bucket, upload on submit, store signed URLs
+
+6. No sign-out button yet
+
+7. Standalone web dashboard not started
+   - Needed for: job management, crew management, report approval, punch logs,
+     Field SOW builder, exports, tenant settings
+
+===============================================================================
+NEXT PRIORITIES
+===============================================================================
+
+1. PowerSync Cloud setup (sync rules for 5 tables)
+2. Wire employee_id from auth session to punches/reports
+3. Create test job data in Supabase to test full flow
+4. Photo upload to Supabase Storage
+5. Sign-out button
+6. Job list filtered by crew assignment (query assignments table)
+7. Admin job management (standalone mode)
+8. Web dashboard scaffold (React/Vite, same Supabase backend)
+
+===============================================================================
+PRODUCTION
+===============================================================================
+
+GitHub: chris7berger-droid/field-command (main branch)
+Local: ~/field-command
+Vercel: not deployed yet (native app, not web)
+App Store: not submitted yet
+
+Build commands:
+  npx expo prebuild --clean    (generate native projects)
+  npx expo run:ios             (build + launch on iOS simulator)
+
+Requires: Xcode 26.4 + iOS 26.4 Simulator runtime
+
+===============================================================================
+ARCHITECTURE REFERENCE
+===============================================================================
+
+Full system architecture: HDSP_CommandSuite_Architecture.docx (v1.0 March 2026)
+Data flow: Sales Command → Field Command → Schedule Command → AR Command
+Field Command reads field_sow, writes time_punches + daily_production_reports
