@@ -1,0 +1,186 @@
+FC_Handoff_v3 — April 10, 2026
+Session: Geofence, PW flag, R2 photo upload, Home screen, linen texture, Apple Dev enrollment
+
+===============================================================================
+WHAT WAS DONE
+===============================================================================
+
+1. Geofence — real GPS on-site verification
+   - Added jobsite_latitude, jobsite_longitude, geofence_radius columns to call_log (Supabase)
+   - Updated PowerSync schema with new columns
+   - checkGeofence() now uses actual job coordinates with Haversine distance
+   - Off-site = warning modal, crew can override (punch flagged gps_override=1)
+   - Demo positions updated to Virginia City, NV (test job #48)
+   - Test job #48 seeded: lat 39.3096, lng -119.65, radius 150m
+
+2. Prevailing wage — denormalized to call_log
+   - Added prevailing_wage boolean column to call_log (Supabase)
+   - Backfilled from proposal_wtc via proposals join
+   - Job #48 = prevailing_wage true
+   - TimeClockTab already read job.prevailing_wage — now gets real value
+   - PW badge shows on job list and time clock
+
+3. Photo upload — Cloudflare R2 via presigned URLs
+   - Cloudflare R2 bucket: fieldcommandphotos (Standard, Western NA)
+   - Account ID: 5047ea7ec58468c75c3e3b29a4cdd9f4
+   - R2 API token scoped to bucket (Account API token)
+   - Supabase secrets set: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET
+   - Edge Function: upload-photo (deployed, --no-verify-jwt)
+     - Authenticates via Supabase JWT
+     - Generates presigned PUT URL via aws4fetch
+     - Returns upload_url + public_url + key
+     - Path structure: jobs/{job_id}/{date}/{uuid}_{filename}
+   - App utility: src/lib/photos.js
+     - compressPhoto(): resize to 1920px max, JPEG quality 0.6
+     - uploadPhoto(): compress → get presigned URL → PUT to R2
+     - uploadPhotos(): sequential upload with progress callback
+   - ReportTab wired: local photos uploaded on submit, progress shown
+   - expo-image-manipulator installed (no plugin entry needed)
+
+4. Home screen — replaced WelcomeScreen
+   - Weekly dashboard: hours, days worked, OT
+   - Bar chart: Mon-Sun daily hours (teal=today, amber=OT)
+   - Today's punches summary
+   - Active jobs list (tappable → JobDetail)
+   - Weekly DPRs with status badges
+   - View All Jobs button
+
+5. PunchStatusBar improvements
+   - NOT CLOCKED IN state (amber) replaces CLOCKED OUT
+   - DRIVING state changed from purple to amber (caution)
+   - Pulsing dot animation on active states
+   - Bigger bar (16px text, 10px padding)
+   - Shift timer freezes at clock_out time (was counting forever)
+
+6. Linen texture — brand element
+   - 120x120 crosshatch PNG tile (warm tan, not black)
+   - LinenBackground component wraps all linen screens
+   - Applied to: HomeScreen, JobListScreen, TimeClockTab, TasksTab, ReportTab
+   - Matches AR Command / Schedule Command web crosshatch pattern
+
+7. Navigation
+   - JobListScreen: added "< HOME" back button in header
+   - App.js: Home is now initial route (was Welcome)
+
+8. Apple Developer Program
+   - Enrolled as Individual under chris7berger@gmail.com
+   - $99/year, pending activation
+   - Will enable: TestFlight, real device testing, App Store publishing
+   - Plan to convert to Organization when D-U-N-S obtained for LLC
+
+===============================================================================
+INFRASTRUCTURE ADDED
+===============================================================================
+
+Cloudflare R2:
+  Account: chris7berger@gmail.com
+  Bucket: fieldcommandphotos
+  Region: Western North America (auto)
+  Storage class: Standard
+  Free tier: 10GB storage, 1M class A ops, 10M class B ops, zero egress
+
+Supabase Edge Function:
+  Name: upload-photo
+  URL: https://pbgvgjjuhnpsumnowuym.supabase.co/functions/v1/upload-photo
+  Deployed with --no-verify-jwt
+
+Supabase secrets added:
+  R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET
+
+===============================================================================
+DB CHANGES (Supabase production)
+===============================================================================
+
+ALTER TABLE call_log ADD COLUMN jobsite_latitude double precision;
+ALTER TABLE call_log ADD COLUMN jobsite_longitude double precision;
+ALTER TABLE call_log ADD COLUMN geofence_radius integer DEFAULT 150;
+ALTER TABLE call_log ADD COLUMN prevailing_wage boolean DEFAULT false;
+
+-- Backfilled prevailing_wage from proposal_wtc via proposals join
+-- Seeded job #48 with geofence coordinates
+
+===============================================================================
+FILES CHANGED / ADDED
+===============================================================================
+
+App.js                                  — HomeScreen replaces WelcomeScreen, new nav route
+app.json                                — No plugin entry for expo-image-manipulator
+package.json                            — Added expo-image-manipulator
+assets/linen-texture.png                — NEW: 120x120 crosshatch tile
+src/components/LinenBackground.js       — NEW: reusable textured background wrapper
+src/components/PunchStatusBar.js        — Amber states, pulse anim, frozen timer
+src/lib/location.js                     — checkGeofence uses jobsite_latitude/longitude
+src/lib/photos.js                       — NEW: R2 upload utility (compress, presign, PUT)
+src/lib/schema.js                       — Geofence + prevailing_wage columns on call_log
+src/screens/HomeScreen.js               — NEW: weekly dashboard
+src/screens/JobListScreen.js            — Back button, LinenBackground
+src/screens/tabs/ReportTab.js           — R2 upload on submit, LinenBackground
+src/screens/tabs/TasksTab.js            — LinenBackground
+src/screens/tabs/TimeClockTab.js        — LinenBackground, frozen timer
+supabase/config.toml                    — NEW: Supabase CLI config
+supabase/functions/upload-photo/index.ts — NEW: presigned URL Edge Function
+
+===============================================================================
+KNOWN ISSUES / NOT YET DONE
+===============================================================================
+
+1. Photo upload not tested end-to-end on device (R2 bucket ready, code wired)
+   - Need to verify presigned URL flow works from simulator/device
+   - R2 public access not configured — reading photos back needs a solution
+     (either enable public access on bucket or add a read endpoint)
+
+2. Sign-out button — still not implemented
+
+3. Per-crew job filtering — all jobs visible to all users
+
+4. Web dashboard — not started (standalone product requirement)
+
+5. Apple Developer activation — pending (usually minutes, sometimes 48hrs)
+   - Once active: set up EAS Build, TestFlight distribution
+
+6. R2 credentials exposed in conversation — REGENERATE the secret access key
+   after this session if conversation is shared anywhere
+
+7. Supabase CLI linked to project but no local dev setup (no Docker)
+
+8. WelcomeScreen.js still exists but is no longer imported — can be deleted
+
+9. .vscode/settings.json and tsconfig.json generated by supabase init —
+   may want to gitignore or clean up
+
+===============================================================================
+NEXT PRIORITIES
+===============================================================================
+
+1. Test photo upload end-to-end (take photo → R2 → verify in bucket)
+2. Configure R2 public access or read endpoint for viewing uploaded photos
+3. Sign-out button
+4. Apple Developer: once active → EAS Build → TestFlight
+5. Per-crew job filtering (assignments table)
+6. Web dashboard scaffold
+7. Get D-U-N-S number for LLC → convert to Organization enrollment
+
+===============================================================================
+STORAGE PLANNING (R2)
+===============================================================================
+
+Per-tenant estimate (5 crew, 5 photos/day, 10 jobs):
+  ~250 photos/day × ~500KB compressed = ~125 MB/day = ~2.5 GB/month
+
+R2 free tier: 10GB → covers ~4 months for one tenant
+R2 paid: $0.015/GB/month, zero egress
+At 25 tenants: ~62 GB/month accumulating, ~$0.94/mo storage cost
+
+Retention policy TBD — recommend 90-day on-device, discuss archival
+
+===============================================================================
+BUILD / RUN
+===============================================================================
+
+Local: ~/field-command
+Build: npx expo run:ios  (full native rebuild)
+       Cmd+R in simulator for JS-only hot reload
+       Only rebuild when adding/removing native packages
+GitHub: chris7berger-droid/field-command (main branch)
+Supabase: pbgvgjjuhnpsumnowuym (Command Suite DB, linked)
+PowerSync: https://69d81f100e377e689729db98.powersync.journeyapps.com
