@@ -1,0 +1,126 @@
+FC_Handoff_v4 — April 10, 2026
+Session: Standalone rebrand, linen texture fix, R2 photo upload verified E2E, Report tab UX
+
+===============================================================================
+WHAT WAS DONE
+===============================================================================
+
+1. Standalone rebrand — removed all HDSP references
+   - Bundle ID: com.hdsp.fieldcommand → com.fieldcommand.app (iOS + Android)
+   - Login subtitle: "HDSP Command Suite" → "Field Command"
+   - Home/Welcome footers: "HDSP Command Suite" → "Command Suite"
+   - Tokens comment: removed HDSP reference
+   - Native project regenerated with `expo prebuild --clean` + full rebuild
+
+2. Linen texture — matched AR Command web background
+   - AR Command web uses same hex values (#b5a896) with no texture overlay
+   - Field Command's crosshatch PNG at opacity 1.0 was darkening the background
+   - Fixed: texture opacity set to 0.55 — visible crosshatch without color shift
+   - Hex values kept identical to Sales Command / AR Command tokens
+
+3. Photo upload — verified end-to-end
+   - Enabled R2 public dev subdomain for reading uploaded photos
+   - Public URL: https://pub-3b94ed6350b94427ac753fe3564cfb37.r2.dev
+   - Updated upload-photo edge function to return public dev URL (redeployed)
+   - Full pipeline tested and confirmed:
+     * Compress on device (expo-image-manipulator)
+     * Presigned URL from Supabase Edge Function
+     * PUT to Cloudflare R2
+     * Public read via r2.dev subdomain (HTTP 200)
+     * URLs saved to daily_production_reports.photos in Supabase
+   - 4 test photos uploaded for job #48, 2026-04-10
+
+4. Report tab UX fixes
+   - ScrollView: added keyboardShouldPersistTaps, keyboardDismissMode, nestedScrollEnabled
+   - Tasks: added X remove button on each task card
+   - Materials: added X remove button on each material row
+   - Save Draft + Submit Report buttons now accessible via scroll
+
+===============================================================================
+INFRASTRUCTURE CHANGES
+===============================================================================
+
+Cloudflare R2:
+  Public dev URL enabled: https://pub-3b94ed6350b94427ac753fe3564cfb37.r2.dev
+  Photos readable without auth at: {public_url}/jobs/{job_id}/{date}/{uuid}_{filename}
+
+Supabase Edge Function:
+  upload-photo redeployed with public_url pointing to r2.dev subdomain
+
+Bundle ID:
+  iOS: com.fieldcommand.app (was com.hdsp.fieldcommand)
+  Android: com.fieldcommand.app (was com.hdsp.fieldcommand)
+
+===============================================================================
+FILES CHANGED
+===============================================================================
+
+app.json                                  — Bundle ID updated (iOS + Android)
+src/components/LinenBackground.js         — Texture opacity 1.0 → 0.55
+src/lib/tokens.js                         — Comment updated, hex values unchanged
+src/screens/HomeScreen.js                 — Footer: "Command Suite"
+src/screens/LoginScreen.js                — Subtitle: "Field Command"
+src/screens/WelcomeScreen.js              — Footer: "Command Suite"
+src/screens/tabs/ReportTab.js             — Scroll fix, remove buttons for tasks/materials
+supabase/functions/upload-photo/index.ts  — Public URL uses r2.dev subdomain
+
+===============================================================================
+APPLE DEVELOPER STATUS
+===============================================================================
+
+Enrolled as Individual under chris7berger@gmail.com ($99/year)
+Status: PENDING ACTIVATION (order processing as of 2026-04-10)
+Account page still shows "Join the Apple Developer Program" banner
+Usually activates within minutes–48 hours, confirmation via email
+
+Once active:
+1. Install eas-cli: npm install -g eas-cli
+2. eas login (Expo account)
+3. cd ~/field-command && eas build:configure
+4. eas build --platform ios --profile development (first dev build)
+5. eas build --platform ios --profile preview → eas submit (TestFlight)
+
+Later: get D-U-N-S for LLC → convert Individual → Organization
+
+===============================================================================
+DESIGN DECISION: SIGN-OUT BUTTON
+===============================================================================
+
+Decided NOT to add sign-out to mobile app. Rationale: crew devices are assigned
+to one person, they sign in once and stay signed in. Sign-out is an
+admin/troubleshooting function that belongs on the web dashboard.
+
+===============================================================================
+KNOWN ISSUES / NOT YET DONE
+===============================================================================
+
+1. Per-crew job filtering — all jobs visible to all users
+2. Web dashboard — not started (standalone product requirement)
+3. R2 credentials — REGENERATE secret access key if prior conversations shared
+4. WelcomeScreen.js still exists but no longer imported — can delete
+5. .vscode/settings.json and tsconfig.json from supabase init — not committed
+6. Supabase CLI linked but no local dev setup (no Docker)
+7. Photo gallery/viewer — photos upload but no way to view them back in-app yet
+8. Test report for job #48 has 0.0 hours (no time punches, just photo test)
+
+===============================================================================
+NEXT PRIORITIES
+===============================================================================
+
+1. Apple Developer activation → EAS Build → TestFlight
+2. Per-crew job filtering (assignments table)
+3. Photo viewer in submitted report / job detail
+4. Web dashboard scaffold
+5. Get D-U-N-S number for LLC → Organization enrollment
+
+===============================================================================
+BUILD / RUN
+===============================================================================
+
+Local: ~/field-command
+Build: npx expo run:ios  (full native rebuild — needed after bundle ID changes)
+       Cmd+R in simulator for JS-only hot reload
+GitHub: chris7berger-droid/field-command (main branch)
+Supabase: pbgvgjjuhnpsumnowuym (Command Suite DB)
+PowerSync: https://69d81f100e377e689729db98.powersync.journeyapps.com
+R2 Photos: https://pub-3b94ed6350b94427ac753fe3564cfb37.r2.dev/jobs/{job_id}/{date}/
