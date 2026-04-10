@@ -24,6 +24,7 @@ import { C, F, S } from '../../lib/tokens';
 import { fmtTime, tod } from '../../lib/utils';
 import { getCurrentPosition, checkGeofence, DEMO_POSITIONS } from '../../lib/location';
 import { fetchWeather } from '../../lib/weather';
+import LinenBackground from '../../components/LinenBackground';
 
 const LUNCH_DURATION_MS = 30 * 60 * 1000;
 const LUNCH_DURATION_DEMO_MS = 15 * 1000;
@@ -133,7 +134,9 @@ export default function TimeClockTab({ jobId, jobName, employeeId }) {
   }, []);
 
   // ── Elapsed shift ─────────────────────────────────────
-  const elapsedMs = shiftStart ? now.getTime() - shiftStart.getTime() : 0;
+  const clockOutPunch = punchHistory.find((p) => p.punch_type === 'clock_out');
+  const shiftEnd = clockOutPunch ? new Date(clockOutPunch.punch_time) : now;
+  const elapsedMs = shiftStart ? shiftEnd.getTime() - shiftStart.getTime() : 0;
   const elapsedStr = formatElapsed(elapsedMs);
 
   // ── Lunch countdown ───────────────────────────────────
@@ -263,7 +266,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId }) {
   // ── Render: vehicle choice (PW only) ──────────────────
   if (isPW && companyVehicle === null && punchHistory.length === 0) {
     return (
-      <View style={styles.screen}>
+      <LinenBackground style={styles.screen}>
         <View style={styles.choiceContainer}>
           <Text style={styles.choiceTitle}>PREVAILING WAGE JOB</Text>
           <Text style={styles.choiceBody}>How are you getting to the job site today?</Text>
@@ -281,13 +284,14 @@ export default function TimeClockTab({ jobId, jobName, employeeId }) {
             <Text style={demoMode ? styles.demoToggleTextActive : styles.demoToggleText}>{demoMode ? 'DEMO MODE ON' : 'DEMO MODE'}</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </LinenBackground>
     );
   }
 
   // ── Render: main clock ────────────────────────────────
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <LinenBackground>
+    <ScrollView style={styles.screenTransparent} contentContainerStyle={styles.content}>
       {/* Live Clock */}
       <View style={styles.clockContainer}>
         <Text style={styles.liveTime}>
@@ -429,6 +433,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId }) {
         </View>
       </Modal>
     </ScrollView>
+    </LinenBackground>
   );
 }
 
@@ -458,6 +463,7 @@ function formatPunchType(type) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.linen },
+  screenTransparent: { flex: 1, backgroundColor: 'transparent' },
   content: { padding: S.md, paddingBottom: S.xxl },
 
   choiceContainer: { flex: 1, justifyContent: 'center', padding: S.lg },

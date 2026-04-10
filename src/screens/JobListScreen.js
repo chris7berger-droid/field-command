@@ -13,16 +13,20 @@ import {
 import { useQuery, useStatus } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
 import { fmtD } from '../lib/utils';
+import LinenBackground from '../components/LinenBackground';
 
-export default function JobListScreen({ navigation }) {
+export default function JobListScreen({ navigation, user }) {
   const status = useStatus();
   const { data: jobs, isLoading } = useQuery(
     `SELECT * FROM call_log WHERE stage = 'mobilized' OR stage = 'in_progress' ORDER BY date ASC`
   );
 
   return (
-    <View style={styles.screen}>
+    <LinenBackground>
       <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} activeOpacity={0.7}>
+          <Text style={styles.backBtn}>{'< HOME'}</Text>
+        </TouchableOpacity>
         <Text style={styles.headerTitle}>FIELD COMMAND</Text>
         <View style={styles.syncRow}>
           <View
@@ -86,7 +90,7 @@ export default function JobListScreen({ navigation }) {
           )}
         />
       )}
-    </View>
+    </LinenBackground>
   );
 }
 
@@ -101,7 +105,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  headerTitle: { fontFamily: F.display, fontSize: 22, color: C.teal, letterSpacing: 2 },
+  backBtn: { fontFamily: F.displayMed, fontSize: 14, color: C.teal, letterSpacing: 1 },
+  headerTitle: { fontFamily: F.display, fontSize: 22, color: C.teal, letterSpacing: 2, flex: 1, textAlign: 'center' },
   syncRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   syncDot: { width: 8, height: 8, borderRadius: 4 },
   syncText: { fontFamily: F.bodyMed, fontSize: 12, color: C.white },

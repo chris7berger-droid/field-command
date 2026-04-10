@@ -9,6 +9,7 @@ import {
 import { useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
 import { parseJSON, fmtPct, fmtHrs } from '../../lib/utils';
+import LinenBackground from '../../components/LinenBackground';
 
 export default function TasksTab({ jobId }) {
   const { data: wtcRows, isLoading } = useQuery(
@@ -40,7 +41,7 @@ export default function TasksTab({ jobId }) {
   }
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <LinenBackground><ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={styles.content}>
       {/* Day Selector */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dayScroll} contentContainerStyle={styles.dayScrollContent}>
         {fieldSow.map((day, idx) => (
@@ -99,6 +100,7 @@ export default function TasksTab({ jobId }) {
         </>
       )}
     </ScrollView>
+    </LinenBackground>
   );
 }
 

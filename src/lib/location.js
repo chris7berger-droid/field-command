@@ -1,8 +1,8 @@
 /**
  * GPS + Geofence utilities for Field Command
  *
- * Geofence rule: warn + flag, never hard-block.
- * Crew can override off-site warning and proceed — punch gets flagged for office review.
+ * GPS is mandatory — location denied = hard block.
+ * Geofence: off-site triggers a warning modal; crew can override, punch gets flagged for office review.
  */
 import * as Location from 'expo-location';
 
@@ -38,8 +38,8 @@ export function checkGeofence(position, jobSite) {
   if (
     !position ||
     !jobSite ||
-    jobSite.latitude == null ||
-    jobSite.longitude == null
+    jobSite.jobsite_latitude == null ||
+    jobSite.jobsite_longitude == null
   ) {
     // No geofence data — assume on-site (don't block crew)
     return { onSite: true, distanceMeters: 0 };
@@ -49,8 +49,8 @@ export function checkGeofence(position, jobSite) {
   const distance = haversine(
     position.latitude,
     position.longitude,
-    jobSite.latitude,
-    jobSite.longitude
+    jobSite.jobsite_latitude,
+    jobSite.jobsite_longitude
   );
 
   return {
@@ -77,6 +77,6 @@ function haversine(lat1, lon1, lat2, lon2) {
  * Demo mode: simulated positions
  */
 export const DEMO_POSITIONS = {
-  onSite: { latitude: 33.4484, longitude: -112.074 },   // Phoenix, AZ (example)
-  offSite: { latitude: 33.5, longitude: -112.2 },        // ~15km away
+  onSite: { latitude: 39.3096, longitude: -119.6500 },   // Virginia City, NV (test job)
+  offSite: { latitude: 39.32, longitude: -119.67 },      // ~2km away
 };

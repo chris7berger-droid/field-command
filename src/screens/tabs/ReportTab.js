@@ -11,6 +11,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
 import { parseJSON, fmtPct, fmtHrs, tod } from '../../lib/utils';
+import { uploadPhotos } from '../../lib/photos';
+import LinenBackground from '../../components/LinenBackground';
 
 export default function ReportTab({ jobId, employeeId }) {
   const db = usePowerSync();
@@ -66,6 +68,7 @@ export default function ReportTab({ jobId, employeeId }) {
   const [photos, setPhotos] = useState([]);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null);
 
   useEffect(() => {
     if (existingReport && existingReport.status === 'draft') {
@@ -155,32 +158,65 @@ export default function ReportTab({ jobId, employeeId }) {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Submit', onPress: async () => {
         setSubmitting(true);
-        try { await upsertReport(buildReportData('submitted')); Vibration.vibrate([100, 50, 100]); } finally { setSubmitting(false); }
+        try {
+          // Upload any local photos to R2
+          const localPhotos = photos.filter((p) => p.startsWith('file://') || p.startsWith('ph://'));
+          const alreadyUploaded = photos.filter((p) => !p.startsWith('file://') && !p.startsWith('ph://'));
+          let finalPhotos = [...alreadyUploaded];
+
+          if (localPhotos.length > 0) {
+            setUploadProgress({ done: 0, total: localPhotos.length });
+            const results = await uploadPhotos(localPhotos, jobId, (done, total) => {
+              setUploadProgress({ done, total });
+            });
+            const failed = results.filter((r) => r.error);
+            if (failed.length > 0) {
+              Alert.alert('Upload Error', `${failed.length} photo(s) failed to upload. Please try again.`);
+              setSubmitting(false);
+              setUploadProgress(null);
+              return;
+            }
+            finalPhotos = [...finalPhotos, ...results.map((r) => r.public_url)];
+          }
+          setUploadProgress(null);
+
+          const data = buildReportData('submitted');
+          data.photos = JSON.stringify(finalPhotos);
+          await upsertReport(data);
+          setPhotos(finalPhotos);
+          Vibration.vibrate([100, 50, 100]);
+        } finally {
+          setSubmitting(false);
+          setUploadProgress(null);
+        }
       }},
     ]);
-  }, [taskEntries, materialEntries, photos, notes, hours]);
+  }, [taskEntries, materialEntries, photos, notes, hours, jobId]);
 
   if (isSubmitted) {
     return (
-      <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-        <View style={styles.submittedCard}>
-          <Text style={styles.submittedTitle}>REPORT SUBMITTED</Text>
-          <Text style={styles.submittedBody}>Today's report has been submitted to the manager approval queue.</Text>
-          <View style={styles.submittedMeta}>
-            <Text style={styles.submittedLabel}>Hours</Text>
-            <Text style={styles.submittedValue}>{fmtHrs(existingReport.hours_regular)}{existingReport.hours_ot > 0 ? ` + ${fmtHrs(existingReport.hours_ot)} OT` : ''}</Text>
+      <LinenBackground>
+        <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={styles.content}>
+          <View style={styles.submittedCard}>
+            <Text style={styles.submittedTitle}>REPORT SUBMITTED</Text>
+            <Text style={styles.submittedBody}>Today's report has been submitted to the manager approval queue.</Text>
+            <View style={styles.submittedMeta}>
+              <Text style={styles.submittedLabel}>Hours</Text>
+              <Text style={styles.submittedValue}>{fmtHrs(existingReport.hours_regular)}{existingReport.hours_ot > 0 ? ` + ${fmtHrs(existingReport.hours_ot)} OT` : ''}</Text>
+            </View>
+            <View style={styles.submittedMeta}>
+              <Text style={styles.submittedLabel}>Status</Text>
+              <View style={styles.statusBadge}><Text style={styles.statusText}>{existingReport.status === 'approved' ? 'APPROVED' : 'PENDING REVIEW'}</Text></View>
+            </View>
           </View>
-          <View style={styles.submittedMeta}>
-            <Text style={styles.submittedLabel}>Status</Text>
-            <View style={styles.statusBadge}><Text style={styles.statusText}>{existingReport.status === 'approved' ? 'APPROVED' : 'PENDING REVIEW'}</Text></View>
-          </View>
-        </View>
-      </ScrollView>
+        </ScrollView>
+      </LinenBackground>
     );
   }
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <LinenBackground>
+      <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={styles.content}>
       <View style={styles.hoursCard}>
         <Text style={styles.hoursTitle}>TODAY'S HOURS</Text>
         <View style={styles.hoursRow}>
@@ -238,10 +274,13 @@ export default function ReportTab({ jobId, employeeId }) {
       <View style={styles.actionRow}>
         <TouchableOpacity style={styles.draftBtn} onPress={saveDraft}><Text style={styles.draftBtnText}>SAVE DRAFT</Text></TouchableOpacity>
         <TouchableOpacity style={[styles.submitBtn, submitting && { opacity: 0.5 }]} onPress={handleSubmit} disabled={submitting}>
-          <Text style={styles.submitBtnText}>{submitting ? 'SUBMITTING...' : 'SUBMIT REPORT'}</Text>
+          <Text style={styles.submitBtnText}>
+            {uploadProgress ? `UPLOADING ${uploadProgress.done}/${uploadProgress.total}...` : submitting ? 'SUBMITTING...' : 'SUBMIT REPORT'}
+          </Text>
         </TouchableOpacity>
       </View>
-    </ScrollView>
+      </ScrollView>
+    </LinenBackground>
   );
 }
 

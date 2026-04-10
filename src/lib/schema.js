@@ -52,6 +52,14 @@ const call_log = new Table({
   // QB
   qb_customer_id:     column.text,
 
+  // Geofence
+  jobsite_latitude:   column.real,
+  jobsite_longitude:  column.real,
+  geofence_radius:    column.integer,
+
+  // Prevailing wage (denormalized from proposal_wtc)
+  prevailing_wage:    column.integer, // boolean
+
   // Flags
   new_site_build:     column.integer, // boolean
   show_cents:         column.integer, // boolean

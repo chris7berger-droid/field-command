@@ -28,7 +28,7 @@ import { supabase } from './src/lib/supabase';
 import { getPowerSync, connectPowerSync } from './src/lib/powersync';
 import PunchStatusBar from './src/components/PunchStatusBar';
 import LoginScreen from './src/screens/LoginScreen';
-import WelcomeScreen from './src/screens/WelcomeScreen';
+import HomeScreen from './src/screens/HomeScreen';
 import JobListScreen from './src/screens/JobListScreen';
 import JobDetailScreen from './src/screens/JobDetailScreen';
 
@@ -145,13 +145,11 @@ export default function App() {
               contentStyle: { backgroundColor: C.linen },
               animation: 'slide_from_right',
             }}
-            initialRouteName="Welcome"
+            initialRouteName="Home"
           >
-            <Stack.Screen
-              name="Welcome"
-              component={WelcomeScreen}
-              initialParams={{ userName: user.name, jobCount: 0 }}
-            />
+            <Stack.Screen name="Home">
+              {(props) => <HomeScreen {...props} userName={user.name} />}
+            </Stack.Screen>
             <Stack.Screen name="JobList">
               {(props) => <JobListScreen {...props} user={user} />}
             </Stack.Screen>
