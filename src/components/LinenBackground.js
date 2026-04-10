@@ -27,6 +27,6 @@ const styles = StyleSheet.create({
     backgroundColor: C.linen,
   },
   image: {
-    opacity: 1,
+    opacity: 0.55,
   },
 });

@@ -286,7 +286,7 @@ export default function HomeScreen({ navigation, userName }) {
         {/* Footer */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>FIELD COMMAND</Text>
-          <Text style={styles.footerSub}>HDSP Command Suite</Text>
+          <Text style={styles.footerSub}>Command Suite</Text>
         </View>
 
       </ScrollView>

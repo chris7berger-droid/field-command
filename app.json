@@ -14,7 +14,7 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.hdsp.fieldcommand",
+      "bundleIdentifier": "com.fieldcommand.app",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Field Command uses your location to verify you are on the job site when clocking in and out.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Field Command uses your location to verify you are on the job site.",
@@ -23,7 +23,7 @@
       }
     },
     "android": {
-      "package": "com.hdsp.fieldcommand",
+      "package": "com.fieldcommand.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#1c1814"

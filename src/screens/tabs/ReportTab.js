@@ -98,11 +98,17 @@ export default function ReportTab({ jobId, employeeId }) {
   const addTask = useCallback(() => {
     setTaskEntries((prev) => [...prev, { description: '', pct_complete_today: 0, cumulative_pct: 0, notes: '' }]);
   }, []);
+  const removeTask = useCallback((idx) => {
+    setTaskEntries((prev) => prev.filter((_, i) => i !== idx));
+  }, []);
   const updateMaterial = useCallback((idx, value) => {
     setMaterialEntries((prev) => { const u = [...prev]; u[idx] = { ...u[idx], qty_used: parseFloat(value) || 0 }; return u; });
   }, []);
   const addMaterial = useCallback(() => {
     setMaterialEntries((prev) => [...prev, { name: '', qty_used: 0 }]);
+  }, []);
+  const removeMaterial = useCallback((idx) => {
+    setMaterialEntries((prev) => prev.filter((_, i) => i !== idx));
   }, []);
   const updateMaterialName = useCallback((idx, value) => {
     setMaterialEntries((prev) => { const u = [...prev]; u[idx] = { ...u[idx], name: value }; return u; });
@@ -216,7 +222,7 @@ export default function ReportTab({ jobId, employeeId }) {
 
   return (
     <LinenBackground>
-      <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={styles.content}>
+      <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" nestedScrollEnabled>
       <View style={styles.hoursCard}>
         <Text style={styles.hoursTitle}>TODAY'S HOURS</Text>
         <View style={styles.hoursRow}>
@@ -229,7 +235,10 @@ export default function ReportTab({ jobId, employeeId }) {
       <Text style={styles.sectionTitle}>TASK COMPLETION</Text>
       {taskEntries.map((task, idx) => (
         <View key={idx} style={styles.taskCard}>
-          <Text style={styles.taskName} numberOfLines={2}>{task.description || `Task ${idx + 1}`}</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <Text style={[styles.taskName, { flex: 1 }]} numberOfLines={2}>{task.description || `Task ${idx + 1}`}</Text>
+            <TouchableOpacity onPress={() => removeTask(idx)} style={styles.removeBtn}><Text style={styles.removeBtnText}>X</Text></TouchableOpacity>
+          </View>
           <View style={styles.taskFields}>
             <View style={styles.fieldGroup}>
               <Text style={styles.fieldLabel}>% TODAY</Text>
@@ -250,6 +259,7 @@ export default function ReportTab({ jobId, employeeId }) {
         <View key={idx} style={styles.materialRow}>
           <TextInput style={styles.materialNameInput} value={mat.name} onChangeText={(v) => updateMaterialName(idx, v)} placeholder="Material name" placeholderTextColor={C.textFaint} />
           <TextInput style={styles.materialQtyInput} value={String(mat.qty_used || '')} onChangeText={(v) => updateMaterial(idx, v)} keyboardType="numeric" placeholder="Qty" placeholderTextColor={C.textFaint} />
+          <TouchableOpacity onPress={() => removeMaterial(idx)} style={styles.removeBtn}><Text style={styles.removeBtnText}>X</Text></TouchableOpacity>
         </View>
       ))}
       <TouchableOpacity style={styles.addBtn} onPress={addMaterial}><Text style={styles.addBtnText}>+ ADD MATERIAL</Text></TouchableOpacity>
@@ -314,6 +324,8 @@ const styles = StyleSheet.create({
   materialRow: { flexDirection: 'row', gap: S.sm, marginBottom: S.sm },
   materialNameInput: { flex: 1, backgroundColor: C.linenCard, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontFamily: F.body, fontSize: 14, color: C.textBody, borderWidth: 1, borderColor: C.borderStrong },
   materialQtyInput: { width: 80, backgroundColor: C.linenCard, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontFamily: F.bodyMed, fontSize: 16, color: C.textHead, textAlign: 'center', borderWidth: 1, borderColor: C.borderStrong },
+  removeBtn: { width: 28, height: 28, borderRadius: 14, backgroundColor: C.linenDeep, alignItems: 'center', justifyContent: 'center', marginLeft: S.sm },
+  removeBtnText: { fontFamily: F.display, fontSize: 12, color: C.textMuted },
   photoRow: { flexDirection: 'row', flexWrap: 'wrap', gap: S.sm, marginBottom: S.sm },
   photoThumb: { width: 80, height: 80, borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: C.borderStrong },
   photoImage: { width: '100%', height: '100%' },

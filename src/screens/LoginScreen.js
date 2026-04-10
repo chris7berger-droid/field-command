@@ -57,7 +57,7 @@ export default function LoginScreen({ onLogin }) {
         <View style={styles.brand}>
           <Text style={styles.title}>FIELD</Text>
           <Text style={styles.titleAccent}>COMMAND</Text>
-          <Text style={styles.subtitle}>HDSP Command Suite</Text>
+          <Text style={styles.subtitle}>Field Command</Text>
         </View>
 
         {/* Form */}

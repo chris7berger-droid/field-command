@@ -95,8 +95,8 @@ Deno.serve(async (req) => {
       { aws: { signQuery: true, allHeaders: true }, expiresIn: 600 } // 10 min expiry
     );
 
-    // The public URL for reading (will need R2 public access or a worker to serve)
-    const public_url = `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${R2_BUCKET}/${key}`;
+    // Public read URL via R2 dev subdomain
+    const public_url = `https://pub-3b94ed6350b94427ac753fe3564cfb37.r2.dev/${key}`;
 
     return new Response(
       JSON.stringify({

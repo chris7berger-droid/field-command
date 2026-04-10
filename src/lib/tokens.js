@@ -1,11 +1,11 @@
 /**
  * Field Command Design Tokens
- * Matches the HDSP Command Suite palette (Sales Command, Schedule Command, AR Command)
+ * Matches the Command Suite palette (Sales Command, Schedule Command, AR Command)
  */
 
 // ── Colors ──────────────────────────────────────────────────────────
 export const C = {
-  // Parchment base
+  // Parchment base (matches AR Command / Sales Command web)
   linen:        '#b5a896',
   linenLight:   '#bfb3a1',
   linenCard:    '#c8bcaa',
