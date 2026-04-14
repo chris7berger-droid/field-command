@@ -19,7 +19,7 @@ export default function WelcomeScreen({ navigation, route }) {
   const firstName = userName ? userName.split(' ')[0] : 'Crew';
 
   const { data: jobCountRows } = useQuery(
-    `SELECT COUNT(*) as cnt FROM call_log WHERE stage = 'mobilized' OR stage = 'in_progress'`
+    `SELECT COUNT(*) as cnt FROM call_log WHERE stage IN ('Scheduled', 'In Progress', 'mobilized', 'in_progress')`
   );
   const jobCount = jobCountRows?.[0]?.cnt ?? 0;
   const today = new Date();

@@ -57,7 +57,7 @@ export default function HomeScreen({ navigation, userName }) {
 
   // ── Active jobs ──────────────────────────────────────
   const { data: jobs } = useQuery(
-    `SELECT * FROM call_log WHERE stage = 'mobilized' OR stage = 'in_progress' ORDER BY date ASC`
+    `SELECT * FROM call_log WHERE stage IN ('Scheduled', 'In Progress', 'mobilized', 'in_progress') ORDER BY date ASC`
   );
 
   // ── This week's DPRs ────────────────────────────────

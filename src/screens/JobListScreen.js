@@ -18,7 +18,7 @@ import LinenBackground from '../components/LinenBackground';
 export default function JobListScreen({ navigation, user }) {
   const status = useStatus();
   const { data: jobs, isLoading } = useQuery(
-    `SELECT * FROM call_log WHERE stage = 'mobilized' OR stage = 'in_progress' ORDER BY date ASC`
+    `SELECT * FROM call_log WHERE stage IN ('Scheduled', 'In Progress', 'mobilized', 'in_progress') ORDER BY date ASC`
   );
 
   return (
