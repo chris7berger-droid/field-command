@@ -1,6 +1,7 @@
 /**
  * Tasks Tab — Daily Task View (Native Only)
- * Reads proposal_wtc.field_sow and displays day plan entries.
+ * Reads jobs.field_sow (synced via PowerSync) for the current job.
+ * Falls back to proposal_wtc.field_sow for legacy jobs without a jobs row.
  */
 import React, { useState, useMemo } from 'react';
 import {
@@ -12,12 +13,25 @@ import { parseJSON, fmtPct, fmtHrs } from '../../lib/utils';
 import LinenBackground from '../../components/LinenBackground';
 
 export default function TasksTab({ jobId }) {
-  const { data: wtcRows, isLoading } = useQuery(
-    `SELECT * FROM proposal_wtc WHERE field_sow IS NOT NULL LIMIT 10`
+  // Primary: read field_sow from jobs table (linked via call_log_id = jobId)
+  const { data: jobRows, isLoading: jobsLoading } = useQuery(
+    `SELECT field_sow, size, size_unit FROM jobs WHERE call_log_id = ? LIMIT 1`,
+    [jobId]
   );
 
+  // Fallback: legacy path via proposal_wtc for jobs without a jobs row
+  const { data: wtcRows, isLoading: wtcLoading } = useQuery(
+    `SELECT field_sow, size, unit FROM proposal_wtc WHERE field_sow IS NOT NULL LIMIT 10`
+  );
+
+  const isLoading = jobsLoading || wtcLoading;
+  const jobRow = jobRows?.[0] || null;
   const wtc = wtcRows?.[0] || null;
-  const fieldSow = useMemo(() => parseJSON(wtc?.field_sow, []), [wtc]);
+  const fieldSow = useMemo(() => {
+    if (jobRow?.field_sow) return parseJSON(jobRow.field_sow, []);
+    if (wtc?.field_sow) return parseJSON(wtc.field_sow, []);
+    return [];
+  }, [jobRow, wtc]);
 
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
   const currentDay = fieldSow[selectedDayIdx] || null;
@@ -90,10 +104,10 @@ export default function TasksTab({ jobId }) {
             </>
           )}
 
-          {wtc?.size > 0 && (
+          {(jobRow?.size > 0 || wtc?.size > 0) && (
             <View style={styles.targetCard}>
               <Text style={styles.targetLabel}>PRODUCTION TARGET</Text>
-              <Text style={styles.targetValue}>{Number(wtc.size).toLocaleString()} {wtc.unit || ''}</Text>
+              <Text style={styles.targetValue}>{Number(jobRow?.size || wtc?.size).toLocaleString()} {jobRow?.size_unit || wtc?.unit || ''}</Text>
               <Text style={styles.targetSub}>Total job scope</Text>
             </View>
           )}

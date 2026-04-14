@@ -136,6 +136,34 @@ const job_crew = new Table({
   created_at:         column.text,
 });
 
+const jobs = new Table({
+  job_num:            column.text,
+  job_name:           column.text,
+  start_date:         column.text,
+  end_date:           column.text,
+  status:             column.text,
+  crew_needed:        column.integer,
+  work_type:          column.text,
+  lead:               column.text,
+  vehicle:            column.text,
+  equipment:          column.text,
+  power_source:       column.text,
+  amount:             column.real,
+  prevailing_wage:    column.text,
+  notes:              column.text,
+  sow:                column.text,
+  call_log_id:        column.integer,
+  field_sow:          column.text, // JSONB → text in SQLite
+  source_proposal_id: column.text,
+  source_call_log_id: column.integer,
+  size:               column.real,
+  size_unit:          column.text,
+  scheduled_start:    column.text,
+  scheduled_end:      column.text,
+  deleted:            column.text,
+  deleted_at:         column.text,
+});
+
 // ── Read-Write Tables (sync up) ────────────────────────────────────
 
 const time_punches = new Table(
@@ -213,6 +241,7 @@ export const AppSchema = new Schema({
   proposal_wtc,
   team_members,
   job_crew,
+  jobs,
   time_punches,
   daily_production_reports,
 });
