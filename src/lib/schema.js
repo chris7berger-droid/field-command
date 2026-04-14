@@ -5,6 +5,7 @@
  *   - call_log        — mobilized jobs
  *   - proposal_wtc    — WTC data including field_sow
  *   - team_members    — crew roster
+ *   - job_crew        — crew-to-job assignments (drives per-user sync filtering)
  *
  * Read-write tables (written locally, synced up to Supabase):
  *   - time_punches          — clock in/out, lunch, drive time
@@ -128,6 +129,13 @@ const team_members = new Table({
   created_at:         column.text,
 });
 
+const job_crew = new Table({
+  job_id:             column.integer,
+  team_member_id:     column.text,
+  role:               column.text,
+  created_at:         column.text,
+});
+
 // ── Read-Write Tables (sync up) ────────────────────────────────────
 
 const time_punches = new Table(
@@ -204,6 +212,7 @@ export const AppSchema = new Schema({
   call_log,
   proposal_wtc,
   team_members,
+  job_crew,
   time_punches,
   daily_production_reports,
 });
