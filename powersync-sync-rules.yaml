@@ -1,76 +1,23 @@
 # PowerSync Sync Rules for Field Command
-# Paste this into PowerSync Dashboard > Sync Rules
+# Currently deployed to Development instance via PowerSync Dashboard
 #
-# Three buckets:
-#   1. global        — team_members (everyone needs the roster)
-#   2. admin_all     — Admin/Manager roles get all data (unfiltered)
-#   3. crew_assigned — Crew members get only their assigned jobs + own punches/reports
-#
-# Filtering chain:
-#   JWT sub (auth_id) → team_members → job_crew → call_log
-#   JWT sub (auth_id) → team_members → time_punches (employee_id = team_members.id)
-#   JWT sub (auth_id) → team_members → daily_production_reports (submitted_by = team_members.id)
+# Single bucket (all_data) — no per-user filtering yet.
+# TODO: Add crew-filtered buckets (admin_all + crew_assigned) once
+# per-crew job filtering is implemented in the app.
 
 bucket_definitions:
-
-  # ── Everyone gets the team roster ────────────────────────────
-  global:
+  all_data:
     data:
-      - SELECT * FROM "public"."team_members"
-
-  # ── Admin/Manager: unfiltered access to everything ──────────
-  admin_all:
-    parameters:
-      - SELECT tm.id AS member_id
-        FROM "public"."team_members" tm
-        WHERE tm.auth_id = token_parameters.user_id
-          AND tm.role IN ('Admin', 'Manager')
-    data:
-      - SELECT * FROM "public"."call_log"
-      - SELECT * FROM "public"."proposal_wtc"
-      - SELECT * FROM "public"."jobs"
-      - SELECT * FROM "public"."job_crew"
-      - SELECT * FROM "public"."time_punches"
-      - SELECT * FROM "public"."daily_production_reports"
-
-  # ── Crew: only assigned jobs + own data ─────────────────────
-  crew_assigned:
-    parameters:
-      - SELECT tm.id AS member_id
-        FROM "public"."team_members" tm
-        WHERE tm.auth_id = token_parameters.user_id
-          AND tm.role NOT IN ('Admin', 'Manager')
-    data:
-      # Jobs assigned to this crew member
-      - SELECT cl.*
-        FROM "public"."call_log" cl
-        INNER JOIN "public"."job_crew" jc ON jc.job_id = cl.id
-        WHERE jc.team_member_id = bucket.member_id
-
-      # Jobs (schedule data + field_sow) for assigned jobs
-      - SELECT j.*
-        FROM "public"."jobs" j
-        INNER JOIN "public"."job_crew" jc ON jc.job_id = j.call_log_id
-        WHERE jc.team_member_id = bucket.member_id
-
-      # WTC/Field SOW for assigned jobs
-      - SELECT pw.*
-        FROM "public"."proposal_wtc" pw
-        INNER JOIN "public"."proposals" p ON p.id = pw.proposal_id
-        INNER JOIN "public"."job_crew" jc ON jc.job_id = p.call_log_id
-        WHERE jc.team_member_id = bucket.member_id
-
-      # This crew member's job_crew rows (so the app knows assignments)
-      - SELECT jc.*
-        FROM "public"."job_crew" jc
-        WHERE jc.team_member_id = bucket.member_id
-
-      # This crew member's time punches only
-      - SELECT tp.*
-        FROM "public"."time_punches" tp
-        WHERE tp.employee_id = bucket.member_id
-
-      # This crew member's daily reports only
-      - SELECT dpr.*
-        FROM "public"."daily_production_reports" dpr
-        WHERE dpr.submitted_by = bucket.member_id
+      - >-
+        SELECT * FROM call_log
+        WHERE stage = 'Scheduled'
+        OR stage = 'In Progress'
+        OR stage = 'Parked'
+        OR stage = 'mobilized'
+        OR stage = 'in_progress'
+      - SELECT * FROM proposal_wtc
+      - SELECT * FROM team_members
+      - SELECT * FROM job_crew
+      - SELECT job_id AS id, * FROM jobs
+      - SELECT * FROM time_punches
+      - SELECT * FROM daily_production_reports
