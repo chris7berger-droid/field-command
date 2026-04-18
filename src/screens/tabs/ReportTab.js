@@ -25,11 +25,23 @@ export default function ReportTab({ jobId, employeeId }) {
   const existingReport = existingReports?.[0] || null;
   const isSubmitted = existingReport?.status === 'submitted' || existingReport?.status === 'approved';
 
+  // Primary: read field_sow from jobs table (linked via call_log_id = jobId)
+  const { data: jobRows } = useQuery(
+    `SELECT field_sow FROM jobs WHERE call_log_id = ? LIMIT 1`,
+    [jobId]
+  );
+
+  // Fallback: legacy path via proposal_wtc for jobs without a jobs row
   const { data: wtcRows } = useQuery(
     `SELECT * FROM proposal_wtc WHERE field_sow IS NOT NULL LIMIT 10`
   );
+  const jobRow = jobRows?.[0] || null;
   const wtc = wtcRows?.[0] || null;
-  const fieldSow = useMemo(() => parseJSON(wtc?.field_sow, []), [wtc]);
+  const fieldSow = useMemo(() => {
+    if (jobRow?.field_sow) return parseJSON(jobRow.field_sow, []);
+    if (wtc?.field_sow) return parseJSON(wtc.field_sow, []);
+    return [];
+  }, [jobRow, wtc]);
 
   const sowTasks = useMemo(() => {
     const tasks = [];

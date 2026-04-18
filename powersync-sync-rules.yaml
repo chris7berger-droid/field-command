@@ -28,6 +28,7 @@ bucket_definitions:
     data:
       - SELECT * FROM "public"."call_log"
       - SELECT * FROM "public"."proposal_wtc"
+      - SELECT * FROM "public"."jobs"
       - SELECT * FROM "public"."job_crew"
       - SELECT * FROM "public"."time_punches"
       - SELECT * FROM "public"."daily_production_reports"
@@ -44,6 +45,12 @@ bucket_definitions:
       - SELECT cl.*
         FROM "public"."call_log" cl
         INNER JOIN "public"."job_crew" jc ON jc.job_id = cl.id
+        WHERE jc.team_member_id = bucket.member_id
+
+      # Jobs (schedule data + field_sow) for assigned jobs
+      - SELECT j.*
+        FROM "public"."jobs" j
+        INNER JOIN "public"."job_crew" jc ON jc.job_id = j.call_log_id
         WHERE jc.team_member_id = bucket.member_id
 
       # WTC/Field SOW for assigned jobs
