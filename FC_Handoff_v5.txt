@@ -1,0 +1,137 @@
+FC_Handoff_v5 — April 17, 2026
+Session: Field SOW fix, simulator setup, PowerSync CLI auth
+
+===============================================================================
+WHAT WAS DONE
+===============================================================================
+
+1. Field SOW — ReportTab fix (COMMITTED + PUSHED)
+   - Root cause: ReportTab only queried proposal_wtc for field_sow, never the
+     jobs table (where Schedule Command actually writes it)
+   - Fix: Added jobs table query (WHERE call_log_id = ?) as primary source,
+     proposal_wtc as fallback — matches the pattern TasksTab already used
+   - File: src/screens/tabs/ReportTab.js
+
+2. PowerSync sync rules — updated repo YAML to match live config
+   - The repo had draft multi-bucket sync rules (admin_all + crew_assigned)
+     that were never deployed to PowerSync
+   - Live PowerSync config uses a single all_data bucket with no filtering
+   - Updated powersync-sync-rules.yaml to match what's actually deployed
+   - jobs table IS in the live sync rules: SELECT job_id AS id, * FROM jobs
+
+3. iOS Simulator — working E2E
+   - Installed CocoaPods via Homebrew (first time on this machine)
+   - Downloaded iOS 26.4.1 simulator runtime via Xcode Components
+   - Installed missing native modules: expo-secure-store, expo-document-picker
+   - Full native build successful: npx expo run:ios
+   - Field Command running on iPhone 17 Pro simulator (iOS 26.4)
+   - Logged in as Chris, HomeScreen renders correctly
+
+4. PowerSync CLI — authenticated
+   - npx powersync login completed (PAT created, stored locally)
+   - Instance linked: Development (69d81f100e377e689729db98)
+   - CLI can deploy sync rules without the dashboard UI
+   - Deploy command: npx powersync deploy sync-config
+
+5. Schedule Command — local dev server running
+   - Cloned sch-command repo
+   - Created .env.local with Supabase URL + anon key
+   - npm run dev working at localhost:5173
+
+===============================================================================
+KEY DISCOVERY: WHY NO JOBS SHOW IN FIELD COMMAND
+===============================================================================
+
+Field Command's HomeScreen queries:
+  SELECT * FROM call_log WHERE stage IN ('Scheduled', 'In Progress')
+
+But call_log.stage values are Sales Command stages: 'Has Bid', 'Sold', etc.
+'Scheduled' and 'In Progress' are jobs.status values (Schedule Command).
+call_log.stage never gets updated to those values.
+
+The PowerSync sync rules also filter call_log by those same stages:
+  SELECT * FROM call_log WHERE stage = 'Scheduled' OR stage = 'In Progress' ...
+
+So no call_log rows sync down, and no jobs appear.
+
+The fix requires either:
+  a) Schedule Command updating call_log.stage when job status changes
+     (updateCallLogStage() exists but may not fire for all transitions)
+  b) Field Command querying the jobs table for its job list instead of call_log
+  c) Testing the full pipeline: Sales → Schedule → Field to see if the
+     "send to Field" button properly updates call_log.stage
+
+===============================================================================
+WHAT WAS NOT DONE
+===============================================================================
+
+- Could not test Field SOW fix end-to-end (no jobs visible in simulator)
+- Need to run a job through the full pipeline to test:
+  Sales Command → Send to Schedule → Parked → Scheduled → Field Command
+- The "send to Field" / mobilize button only appears on newly parked jobs
+
+===============================================================================
+INFRASTRUCTURE STATE
+===============================================================================
+
+Running processes (kill before next session):
+  - Expo dev server for field-command (check port 8082)
+  - Vite dev server for sch-command (localhost:5173)
+  - M4L-C may still be on port 8081 (pid was 20292)
+
+PowerSync CLI:
+  - Logged in, linked to Development instance
+  - Can deploy sync rules: npx powersync deploy sync-config
+
+Simulator:
+  - iPhone 17 Pro (iOS 26.4) available
+  - Field Command installed and running
+
+===============================================================================
+FILES CHANGED (field-command repo)
+===============================================================================
+
+src/screens/tabs/ReportTab.js  — Added jobs table query for field_sow
+powersync-sync-rules.yaml      — Updated to match live PowerSync config
+package.json / package-lock    — Added expo-secure-store, expo-document-picker
+
+Commits:
+  5815d8b fix: sync jobs table via PowerSync and read field_sow in ReportTab
+  1f90612 chore: update sync rules YAML to match live PowerSync config
+
+Both pushed to main on GitHub.
+
+===============================================================================
+NEXT SESSION — TESTING THE FULL PIPELINE
+===============================================================================
+
+Goal: Create a new job through the full Sales → Schedule → Field pipeline
+and verify Field SOW appears on Tasks tab AND Report tab.
+
+Steps:
+1. Start Sales Command: cd ~/sales-command && npm run dev
+2. Start Schedule Command: cd ~/sch-command && npm run dev
+3. Start Field Command: cd ~/field-command && npx expo run:ios
+4. In Sales Command: create a test proposal with a Field SOW, approve/sell it
+5. In Sales Command: "Send to Schedule" — creates a Parked job in Schedule Command
+6. In Schedule Command: Confirm & Schedule the job (status → Scheduled)
+7. In Schedule Command: look for the "send to Field" / mobilize button
+8. Verify call_log.stage gets updated so PowerSync syncs the job
+9. In Field Command simulator: verify job appears, tap into it
+10. Check Tasks tab — Field SOW days/tasks should render
+11. Check Report tab — tasks and materials should auto-populate from Field SOW
+
+If jobs still don't appear after step 7, debug:
+  - Check call_log.stage value in Supabase (should be 'Scheduled' or 'In Progress')
+  - Check PowerSync sync rules filter matches
+  - May need to update Field Command to query jobs table instead of call_log
+
+===============================================================================
+BUILD / RUN (quick reference)
+===============================================================================
+
+Field Command:  cd ~/field-command && npx expo run:ios
+                Cmd+R in simulator for JS-only hot reload
+Schedule:       cd ~/sch-command && npm run dev
+Sales:          cd ~/sales-command && npm run dev
+PowerSync:      npx powersync deploy sync-config (from ~/field-command)
