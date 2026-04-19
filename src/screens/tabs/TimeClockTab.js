@@ -382,6 +382,43 @@ export default function TimeClockTab({ jobId, jobName, employeeId }) {
         </View>
       )}
 
+      {/* Today's Hours */}
+      {punchHistory.length > 0 && (() => {
+        let totalMs = 0, clockInTime = null, lunchMs = 0, lunchStartTime = null;
+        for (const p of punchHistory) {
+          const t = new Date(p.punch_time).getTime();
+          if (p.punch_type === 'clock_in') clockInTime = t;
+          if (p.punch_type === 'clock_out' && clockInTime) { totalMs += t - clockInTime; clockInTime = null; }
+          if (p.punch_type === 'lunch_start') lunchStartTime = t;
+          if (p.punch_type === 'lunch_end' && lunchStartTime) { lunchMs += t - lunchStartTime; lunchStartTime = null; }
+        }
+        if (clockInTime) totalMs += now.getTime() - clockInTime;
+        const netMs = Math.max(0, totalMs - lunchMs);
+        const totalMin = Math.floor(netMs / 60000);
+        const h = Math.floor(totalMin / 60);
+        const m = totalMin % 60;
+        const hrsStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+        const totalHrs = netMs / 3600000;
+        const otMin = Math.max(0, Math.floor(totalHrs * 60) - 480);
+        const otH = Math.floor(otMin / 60);
+        const otM = otMin % 60;
+        const otStr = otH > 0 ? `${otH}h ${otM}m` : `${otM}m`;
+        const regMin = Math.min(totalMin, 480);
+        const regH = Math.floor(regMin / 60);
+        const regM = regMin % 60;
+        const regStr = regH > 0 ? `${regH}h ${regM}m` : `${regM}m`;
+        return (
+          <View style={styles.hoursCard}>
+            <Text style={styles.hoursTitle}>TODAY'S HOURS</Text>
+            <View style={styles.hoursRow}>
+              <View style={styles.hourBlock}><Text style={styles.hourValue}>{regStr}</Text><Text style={styles.hourLabel}>Regular</Text></View>
+              {otMin > 0 && <View style={styles.hourBlock}><Text style={[styles.hourValue, { color: C.amber }]}>{otStr}</Text><Text style={styles.hourLabel}>Overtime</Text></View>}
+              <View style={styles.hourBlock}><Text style={styles.hourValue}>{hrsStr}</Text><Text style={styles.hourLabel}>Total</Text></View>
+            </View>
+          </View>
+        );
+      })()}
+
       {/* Demo Toggle */}
       <View style={styles.demoSection}>
         <TouchableOpacity style={[styles.demoToggle, demoMode && styles.demoToggleActive]} onPress={() => setDemoMode((d) => !d)}>
@@ -516,6 +553,13 @@ const styles = StyleSheet.create({
   historyTime: { fontFamily: F.body, fontSize: 14, color: C.textLight },
   offSiteBadge: { backgroundColor: C.dark, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginLeft: 8 },
   offSiteText: { fontFamily: F.bodyMed, fontSize: 10, color: C.amber, letterSpacing: 0.5 },
+
+  hoursCard: { backgroundColor: C.dark, borderRadius: 10, padding: S.md, marginTop: S.lg },
+  hoursTitle: { fontFamily: F.display, fontSize: 12, color: C.textFaint, letterSpacing: 2, marginBottom: S.sm, textAlign: 'center' },
+  hoursRow: { flexDirection: 'row', justifyContent: 'space-evenly' },
+  hourBlock: { alignItems: 'center' },
+  hourValue: { fontFamily: F.display, fontSize: 28, color: C.teal },
+  hourLabel: { fontFamily: F.body, fontSize: 12, color: C.textFaint, marginTop: 2 },
 
   demoSection: { marginTop: S.xl, alignItems: 'center', gap: S.sm },
   demoToggle: { borderWidth: 1, borderColor: C.border, borderRadius: 6, paddingHorizontal: 16, paddingVertical: 8 },

@@ -21,3 +21,4 @@ bucket_definitions:
       - SELECT job_id AS id, * FROM jobs
       - SELECT * FROM time_punches
       - SELECT * FROM daily_production_reports
+      - SELECT * FROM daily_log_entries

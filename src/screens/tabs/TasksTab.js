@@ -34,6 +34,7 @@ export default function TasksTab({ jobId }) {
   }, [jobRow, wtc]);
 
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
+  const [expandedMat, setExpandedMat] = useState(null); // idx of expanded material
   const currentDay = fieldSow[selectedDayIdx] || null;
 
   if (isLoading) {
@@ -75,7 +76,7 @@ export default function TasksTab({ jobId }) {
             </View>
           </View>
 
-          <Text style={styles.sectionTitle}>TASKS</Text>
+          <Text style={styles.sectionTitle}>PLANNED TASKS</Text>
           {(currentDay.tasks || []).length === 0 ? (
             <Text style={styles.noItems}>No tasks for this day</Text>
           ) : (
@@ -83,7 +84,7 @@ export default function TasksTab({ jobId }) {
               <View key={task.id || idx} style={styles.taskCard}>
                 <View style={styles.taskTop}>
                   <Text style={styles.taskDesc} numberOfLines={2}>{task.description || 'Untitled task'}</Text>
-                  <View style={styles.pctBadge}><Text style={styles.pctText}>{fmtPct(task.pct_complete)}</Text></View>
+                  <View style={styles.pctBadge}><Text style={styles.pctLabel}>TARGET </Text><Text style={styles.pctText}>{fmtPct(task.pct_complete)}</Text></View>
                 </View>
                 <View style={styles.progressTrack}>
                   <View style={[styles.progressFill, { width: `${Math.min(task.pct_complete || 0, 100)}%` }]} />
@@ -96,10 +97,22 @@ export default function TasksTab({ jobId }) {
             <>
               <Text style={[styles.sectionTitle, { marginTop: S.lg }]}>MATERIALS</Text>
               {currentDay.materials.map((mat, idx) => (
-                <View key={idx} style={styles.materialRow}>
-                  <Text style={styles.materialName} numberOfLines={1}>{mat.name || 'Unknown material'}</Text>
-                  <View style={styles.qtyBadge}><Text style={styles.qtyText}>{mat.qty_planned ?? '—'}</Text></View>
-                </View>
+                <TouchableOpacity key={idx} style={styles.materialRow} onPress={() => setExpandedMat(expandedMat === idx ? null : idx)} activeOpacity={0.7}>
+                  <View style={styles.materialTop}>
+                    <Text style={styles.materialName} numberOfLines={expandedMat === idx ? 0 : 1}>{mat.name || 'Unknown material'}</Text>
+                    <View style={styles.qtyBadge}><Text style={styles.qtyText}>{mat.qty_planned ?? '—'}</Text></View>
+                  </View>
+                  {expandedMat === idx && (
+                    <View style={styles.materialSpecs}>
+                      {mat.mils > 0 && <View style={styles.specRow}><Text style={styles.specLabel}>MILS</Text><Text style={styles.specValue}>{mat.mils}</Text></View>}
+                      {mat.coverage_rate ? <View style={styles.specRow}><Text style={styles.specLabel}>COVERAGE</Text><Text style={styles.specValue}>{mat.coverage_rate}</Text></View> : null}
+                      {mat.mix_time > 0 && <View style={styles.specRow}><Text style={styles.specLabel}>MIX TIME</Text><Text style={styles.specValue}>{mat.mix_time} min</Text></View>}
+                      {mat.mix_speed ? <View style={styles.specRow}><Text style={styles.specLabel}>MIX SPEED</Text><Text style={styles.specValue}>{mat.mix_speed}</Text></View> : null}
+                      {mat.cure_time ? <View style={styles.specRow}><Text style={styles.specLabel}>CURE TIME</Text><Text style={styles.specValue}>{mat.cure_time}</Text></View> : null}
+                      {!mat.mils && !mat.coverage_rate && !mat.mix_time && !mat.mix_speed && !mat.cure_time && <Text style={styles.noSpecs}>No specs entered</Text>}
+                    </View>
+                  )}
+                </TouchableOpacity>
               ))}
             </>
           )}
@@ -142,12 +155,19 @@ const styles = StyleSheet.create({
   taskCard: { backgroundColor: C.linenCard, borderRadius: 10, padding: S.md, borderWidth: 1, borderColor: C.borderStrong, marginBottom: S.sm },
   taskTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: S.sm },
   taskDesc: { fontFamily: F.bodySemi, fontSize: 15, color: C.textHead, flex: 1, marginRight: S.sm, lineHeight: 22 },
-  pctBadge: { backgroundColor: C.dark, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
+  pctBadge: { backgroundColor: C.dark, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, flexDirection: 'row', alignItems: 'center' },
+  pctLabel: { fontFamily: F.display, fontSize: 10, color: C.textFaint, letterSpacing: 1 },
   pctText: { fontFamily: F.display, fontSize: 14, color: C.teal, letterSpacing: 0.5 },
   progressTrack: { height: 6, backgroundColor: C.linenDeep, borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: '100%', backgroundColor: C.teal, borderRadius: 3 },
-  materialRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: C.linenCard, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 6, borderWidth: 1, borderColor: C.border },
+  materialRow: { backgroundColor: C.linenCard, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 6, borderWidth: 1, borderColor: C.border },
+  materialTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   materialName: { fontFamily: F.body, fontSize: 14, color: C.textBody, flex: 1, marginRight: S.sm },
+  materialSpecs: { marginTop: S.sm, paddingTop: S.sm, borderTopWidth: 1, borderTopColor: C.border },
+  specRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
+  specLabel: { fontFamily: F.display, fontSize: 11, color: C.textFaint, letterSpacing: 1.5 },
+  specValue: { fontFamily: F.bodyMed, fontSize: 13, color: C.textBody },
+  noSpecs: { fontFamily: F.body, fontSize: 13, color: C.textFaint, fontStyle: 'italic' },
   qtyBadge: { backgroundColor: C.dark, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 3 },
   qtyText: { fontFamily: F.bodyMed, fontSize: 13, color: C.teal },
   targetCard: { backgroundColor: C.dark, borderRadius: 10, padding: S.md, marginTop: S.lg, alignItems: 'center' },

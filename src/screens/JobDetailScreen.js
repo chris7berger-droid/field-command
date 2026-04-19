@@ -10,7 +10,7 @@ import TasksTab from './tabs/TasksTab';
 import ReportTab from './tabs/ReportTab';
 
 const TAB_KEYS = ['TimeClock', 'Tasks', 'Report'];
-const TAB_LABELS = ['TIME CLOCK', 'TASKS', 'REPORT'];
+const TAB_LABELS = ['TIME CLOCK', 'FIELD SOW', 'REPORT'];
 
 export default function JobDetailScreen({ route, navigation, user }) {
   const { jobId, jobName } = route.params;

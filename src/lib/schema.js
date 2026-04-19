@@ -234,6 +234,27 @@ const daily_production_reports = new Table(
   { indexes: { by_job_date: ['job_id', 'report_date'] } }
 );
 
+const daily_log_entries = new Table(
+  {
+    job_id:             column.integer,
+    employee_id:        column.text,
+
+    // Type: SOD, MOD, EOD, or OTHER
+    entry_type:         column.text,
+
+    // Photos — JSONB array of URLs
+    photos:             column.text,
+
+    // Notes — required
+    notes:              column.text,
+
+    // Sync
+    synced:             column.integer, // boolean
+    created_at:         column.text,
+  },
+  { indexes: { by_job_date: ['job_id', 'created_at'] } }
+);
+
 // ── Export Schema ──────────────────────────────────────────────────
 
 export const AppSchema = new Schema({
@@ -244,4 +265,5 @@ export const AppSchema = new Schema({
   jobs,
   time_punches,
   daily_production_reports,
+  daily_log_entries,
 });

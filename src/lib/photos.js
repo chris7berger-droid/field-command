@@ -7,8 +7,8 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { supabase, SUPABASE_URL } from './supabase';
 
 const UPLOAD_FUNCTION = `${SUPABASE_URL}/functions/v1/upload-photo`;
-const MAX_WIDTH = 1920;
-const JPEG_QUALITY = 0.6;
+const MAX_WIDTH = 1800;
+const JPEG_QUALITY = 0.7;
 
 /**
  * Compress and resize a photo before upload.
@@ -78,8 +78,7 @@ export async function uploadPhoto(localUri, jobId, filename) {
 }
 
 /**
- * Upload multiple photos, returning results for each.
- * Uploads sequentially to avoid overwhelming the connection on mobile.
+ * Upload multiple photos in parallel (3 concurrent).
  *
  * @param {string[]} uris - Array of local file URIs
  * @param {number} jobId - Job ID
@@ -87,16 +86,29 @@ export async function uploadPhoto(localUri, jobId, filename) {
  * @returns {Promise<Array<{ uri: string, key: string, public_url: string, error?: string }>>}
  */
 export async function uploadPhotos(uris, jobId, onProgress) {
-  const results = [];
-  for (let i = 0; i < uris.length; i++) {
+  const results = new Array(uris.length);
+  let completed = 0;
+  const concurrency = 3;
+
+  async function uploadOne(i) {
     try {
       const { key, public_url } = await uploadPhoto(uris[i], jobId, `photo_${i + 1}.jpg`);
-      results.push({ uri: uris[i], key, public_url });
+      results[i] = { uri: uris[i], key, public_url };
     } catch (err) {
       console.error(`Photo ${i + 1} upload failed:`, err);
-      results.push({ uri: uris[i], key: null, public_url: null, error: err.message });
+      results[i] = { uri: uris[i], key: null, public_url: null, error: err.message };
     }
-    if (onProgress) onProgress(i + 1, uris.length);
+    completed++;
+    if (onProgress) onProgress(completed, uris.length);
+  }
+
+  // Process in batches of 3
+  for (let i = 0; i < uris.length; i += concurrency) {
+    const batch = [];
+    for (let j = i; j < Math.min(i + concurrency, uris.length); j++) {
+      batch.push(uploadOne(j));
+    }
+    await Promise.all(batch);
   }
   return results;
 }

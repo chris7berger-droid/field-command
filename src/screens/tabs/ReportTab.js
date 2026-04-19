@@ -1,6 +1,12 @@
 /**
- * Report Tab — Daily Production Report (Native Only)
- * Job Lead submits: task %, materials used, photos, notes (required).
+ * Report Tab — PRT (Production Rate Tracker) + Daily Log
+ *
+ * PRT: Crew enters daily % per Field SOW task, compared to target.
+ *      Notes required per task. Creates Hawthorne Effect for self-improvement.
+ *
+ * Daily Log: SOD/MOD/EOD + optional extra entries.
+ *            Each entry = photos + required note, submitted individually.
+ *            Photos upload to Cloudflare R2 via upload-photo edge function.
  */
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
@@ -10,28 +16,26 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
-import { parseJSON, fmtPct, fmtHrs, tod } from '../../lib/utils';
+import { parseJSON, fmtPct, tod } from '../../lib/utils';
 import { uploadPhotos } from '../../lib/photos';
 import LinenBackground from '../../components/LinenBackground';
+
+const LOG_TYPES = [
+  { key: 'SOD', label: 'START OF DAY', hint: 'Photos of job site at start' },
+  { key: 'MOD', label: 'MID DAY', hint: 'Photos of progress' },
+  { key: 'EOD', label: 'END OF DAY', hint: 'How the site was left + all progress' },
+];
 
 export default function ReportTab({ jobId, employeeId }) {
   const db = usePowerSync();
   const today = tod();
+  const [section, setSection] = useState('prt'); // 'prt' | 'log'
 
-  const { data: existingReports } = useQuery(
-    `SELECT * FROM daily_production_reports WHERE job_id = ? AND report_date = ? LIMIT 1`,
-    [jobId, today]
-  );
-  const existingReport = existingReports?.[0] || null;
-  const isSubmitted = existingReport?.status === 'submitted' || existingReport?.status === 'approved';
-
-  // Primary: read field_sow from jobs table (linked via call_log_id = jobId)
+  // ── Field SOW data ──────────────────────────────────────
   const { data: jobRows } = useQuery(
     `SELECT field_sow FROM jobs WHERE call_log_id = ? LIMIT 1`,
     [jobId]
   );
-
-  // Fallback: legacy path via proposal_wtc for jobs without a jobs row
   const { data: wtcRows } = useQuery(
     `SELECT * FROM proposal_wtc WHERE field_sow IS NOT NULL LIMIT 10`
   );
@@ -43,6 +47,7 @@ export default function ReportTab({ jobId, employeeId }) {
     return [];
   }, [jobRow, wtc]);
 
+  // Unique tasks from all days with their target %
   const sowTasks = useMemo(() => {
     const tasks = [];
     fieldSow.forEach((day) => {
@@ -55,252 +60,391 @@ export default function ReportTab({ jobId, employeeId }) {
     return tasks;
   }, [fieldSow]);
 
-  const { data: punches } = useQuery(
-    `SELECT * FROM time_punches WHERE job_id = ? AND punch_date = ? ORDER BY punch_time ASC`,
+  // ── PRT State ───────────────────────────────────────────
+  const { data: existingReports } = useQuery(
+    `SELECT * FROM daily_production_reports WHERE job_id = ? AND report_date = ? LIMIT 1`,
     [jobId, today]
   );
-
-  const hours = useMemo(() => {
-    if (!punches || punches.length === 0) return { regular: 0, ot: 0 };
-    let totalMs = 0, clockInTime = null, lunchMs = 0, lunchStartTime = null;
-    for (const p of punches) {
-      const t = new Date(p.punch_time).getTime();
-      if (p.punch_type === 'clock_in') clockInTime = t;
-      if (p.punch_type === 'clock_out' && clockInTime) { totalMs += t - clockInTime; clockInTime = null; }
-      if (p.punch_type === 'lunch_start') lunchStartTime = t;
-      if (p.punch_type === 'lunch_end' && lunchStartTime) { lunchMs += t - lunchStartTime; lunchStartTime = null; }
-    }
-    const netMs = Math.max(0, totalMs - lunchMs);
-    const totalHrs = netMs / 3600000;
-    return { regular: Math.round(Math.min(totalHrs, 8) * 10) / 10, ot: Math.round(Math.max(0, totalHrs - 8) * 10) / 10 };
-  }, [punches]);
+  const existingReport = existingReports?.[0] || null;
+  const prtSubmitted = existingReport?.status === 'submitted' || existingReport?.status === 'approved';
 
   const [taskEntries, setTaskEntries] = useState([]);
-  const [materialEntries, setMaterialEntries] = useState([]);
-  const [photos, setPhotos] = useState([]);
-  const [notes, setNotes] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(null);
+  const [prtSubmitting, setPrtSubmitting] = useState(false);
 
   useEffect(() => {
     if (existingReport && existingReport.status === 'draft') {
       setTaskEntries(parseJSON(existingReport.tasks, []));
-      setMaterialEntries(parseJSON(existingReport.materials_used, []));
-      setPhotos(parseJSON(existingReport.photos, []));
-      setNotes(existingReport.notes || '');
-    } else if (sowTasks.length > 0 && taskEntries.length === 0) {
-      setTaskEntries(sowTasks.map((t) => ({ description: t.description, pct_complete_today: 0, cumulative_pct: 0, notes: '' })));
+    } else if (!existingReport && sowTasks.length > 0 && taskEntries.length === 0) {
+      setTaskEntries(sowTasks.map((t) => ({ description: t.description, target_pct: t.target_pct, pct_today: 0, notes: '' })));
     }
   }, [existingReport, sowTasks]);
-
-  useEffect(() => {
-    if (materialEntries.length > 0) return;
-    const mats = [];
-    fieldSow.forEach((day) => {
-      (day.materials || []).forEach((m) => {
-        if (!mats.find((ex) => ex.name === m.name)) mats.push({ name: m.name, qty_used: 0 });
-      });
-    });
-    if (mats.length > 0) setMaterialEntries(mats);
-  }, [fieldSow]);
 
   const updateTask = useCallback((idx, field, value) => {
     setTaskEntries((prev) => { const u = [...prev]; u[idx] = { ...u[idx], [field]: value }; return u; });
   }, []);
-  const addTask = useCallback(() => {
-    setTaskEntries((prev) => [...prev, { description: '', pct_complete_today: 0, cumulative_pct: 0, notes: '' }]);
-  }, []);
-  const removeTask = useCallback((idx) => {
-    setTaskEntries((prev) => prev.filter((_, i) => i !== idx));
-  }, []);
-  const updateMaterial = useCallback((idx, value) => {
-    setMaterialEntries((prev) => { const u = [...prev]; u[idx] = { ...u[idx], qty_used: parseFloat(value) || 0 }; return u; });
-  }, []);
-  const addMaterial = useCallback(() => {
-    setMaterialEntries((prev) => [...prev, { name: '', qty_used: 0 }]);
-  }, []);
-  const removeMaterial = useCallback((idx) => {
-    setMaterialEntries((prev) => prev.filter((_, i) => i !== idx));
-  }, []);
-  const updateMaterialName = useCallback((idx, value) => {
-    setMaterialEntries((prev) => { const u = [...prev]; u[idx] = { ...u[idx], name: value }; return u; });
-  }, []);
 
-  const pickPhoto = useCallback(async () => {
+  // ── Daily Log State ─────────────────────────────────────
+  const { data: logEntries, isLoading: logLoading } = useQuery(
+    `SELECT * FROM daily_log_entries WHERE job_id = ? AND created_at >= ? ORDER BY created_at ASC`,
+    [jobId, today + 'T00:00:00']
+  );
+
+  const submittedTypes = useMemo(() => {
+    return new Set((logEntries || []).map(e => e.entry_type));
+  }, [logEntries]);
+
+  const [logType, setLogType] = useState(null); // which log entry is being composed
+  const [logPhotos, setLogPhotos] = useState([]);
+  const [logNotes, setLogNotes] = useState('');
+  const [logSubmitting, setLogSubmitting] = useState(false);
+
+  // ── Photo helpers ───────────────────────────────────────
+  const pickPhoto = useCallback(async (setter) => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') { Alert.alert('Permission needed', 'Photo library access is required.'); return; }
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7, allowsMultipleSelection: true });
-    if (!result.canceled && result.assets) setPhotos((prev) => [...prev, ...result.assets.map((a) => a.uri)]);
+    if (!result.canceled && result.assets) setter((prev) => [...prev, ...result.assets.map((a) => a.uri)]);
   }, []);
 
-  const takePhoto = useCallback(async () => {
+  const takePhoto = useCallback(async (setter) => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') { Alert.alert('Permission needed', 'Camera access is required.'); return; }
     const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
-    if (!result.canceled && result.assets) setPhotos((prev) => [...prev, ...result.assets.map((a) => a.uri)]);
+    if (!result.canceled && result.assets) setter((prev) => [...prev, ...result.assets.map((a) => a.uri)]);
   }, []);
 
-  const removePhoto = useCallback((idx) => { setPhotos((prev) => prev.filter((_, i) => i !== idx)); }, []);
+  // ── PRT Submit ──────────────────────────────────────────
+  const submitPRT = useCallback(async () => {
+    const missing = taskEntries.find(t => !t.notes || !t.notes.trim());
+    if (missing) { Alert.alert('Notes required', 'Every task needs a note before submitting.'); return; }
 
-  function buildReportData(status) {
-    return {
-      job_id: jobId, wtc_id: wtc?.id || '',
-      report_date: today, submitted_by: employeeId,
-      tasks: JSON.stringify(taskEntries), materials_used: JSON.stringify(materialEntries),
-      hours_regular: hours.regular, hours_ot: hours.ot,
-      photos: JSON.stringify(photos), notes: notes.trim(), status,
-      synced: 0, created_at: new Date().toISOString(),
+    setPrtSubmitting(true);
+    try {
+      const data = {
+        tasks: JSON.stringify(taskEntries),
+        materials_used: '[]',
+        hours_regular: 0, hours_ot: 0,
+        photos: '[]',
+        notes: 'PRT submission',
+        status: 'submitted',
+      };
+
+      if (existingReport) {
+        await db.execute(
+          `UPDATE daily_production_reports SET tasks=?, materials_used=?, hours_regular=?, hours_ot=?, photos=?, notes=?, status=?, synced=0 WHERE id=?`,
+          [data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, existingReport.id]
+        );
+      } else {
+        const id = generateId();
+        await db.execute(
+          `INSERT INTO daily_production_reports (id,job_id,wtc_id,report_date,submitted_by,tasks,materials_used,hours_regular,hours_ot,photos,notes,status,synced,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?)`,
+          [id, jobId, wtc?.id || '', today, employeeId, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, new Date().toISOString()]
+        );
+      }
+      Vibration.vibrate([100, 50, 100]);
+    } finally {
+      setPrtSubmitting(false);
+    }
+  }, [taskEntries, existingReport, jobId, employeeId, today, db, wtc]);
+
+  const savePRTDraft = useCallback(async () => {
+    const data = {
+      tasks: JSON.stringify(taskEntries),
+      materials_used: '[]',
+      hours_regular: 0, hours_ot: 0,
+      photos: '[]',
+      notes: 'PRT draft',
+      status: 'draft',
     };
-  }
 
-  async function upsertReport(data) {
     if (existingReport) {
       await db.execute(
-        `UPDATE daily_production_reports SET tasks=?, materials_used=?, hours_regular=?, hours_ot=?, photos=?, notes=?, status=?, synced=0 WHERE id=?`,
-        [data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, existingReport.id]
+        `UPDATE daily_production_reports SET tasks=?, status=?, synced=0 WHERE id=?`,
+        [data.tasks, data.status, existingReport.id]
       );
     } else {
       const id = generateId();
       await db.execute(
         `INSERT INTO daily_production_reports (id,job_id,wtc_id,report_date,submitted_by,tasks,materials_used,hours_regular,hours_ot,photos,notes,status,synced,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?)`,
-        [id, data.job_id, data.wtc_id, data.report_date, data.submitted_by, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, data.created_at]
+        [id, jobId, wtc?.id || '', today, employeeId, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, new Date().toISOString()]
       );
     }
-  }
+    Vibration.vibrate(50);
+  }, [taskEntries, existingReport, jobId, employeeId, today, db, wtc]);
 
-  const saveDraft = useCallback(async () => { await upsertReport(buildReportData('draft')); Vibration.vibrate(50); }, [taskEntries, materialEntries, photos, notes, hours]);
+  // ── Daily Log Submit (optimistic — save immediately, upload photos in background) ──
+  const submitLogEntry = useCallback(async () => {
+    if (!logNotes.trim()) { Alert.alert('Note required', 'Add a note before submitting.'); return; }
+    if (logPhotos.length === 0) { Alert.alert('Photos required', 'Add at least one photo.'); return; }
 
-  const handleSubmit = useCallback(async () => {
-    if (!notes.trim()) { Alert.alert('Notes required', 'Please add notes before submitting.'); return; }
-    Alert.alert('Submit Report', 'Once submitted, this goes to the manager approval queue. Continue?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Submit', onPress: async () => {
-        setSubmitting(true);
-        try {
-          // Upload any local photos to R2
-          const localPhotos = photos.filter((p) => p.startsWith('file://') || p.startsWith('ph://'));
-          const alreadyUploaded = photos.filter((p) => !p.startsWith('file://') && !p.startsWith('ph://'));
-          let finalPhotos = [...alreadyUploaded];
+    setLogSubmitting(true);
+    try {
+      // Save entry immediately with local photo URIs
+      const id = generateId();
+      const localUris = [...logPhotos];
+      await db.execute(
+        `INSERT INTO daily_log_entries (id, job_id, employee_id, entry_type, photos, notes, synced, created_at) VALUES (?,?,?,?,?,?,0,?)`,
+        [id, jobId, employeeId, logType, JSON.stringify(localUris), logNotes.trim(), new Date().toISOString()]
+      );
 
-          if (localPhotos.length > 0) {
-            setUploadProgress({ done: 0, total: localPhotos.length });
-            const results = await uploadPhotos(localPhotos, jobId, (done, total) => {
-              setUploadProgress({ done, total });
-            });
-            const failed = results.filter((r) => r.error);
-            if (failed.length > 0) {
-              Alert.alert('Upload Error', `${failed.length} photo(s) failed to upload. Please try again.`);
-              setSubmitting(false);
-              setUploadProgress(null);
-              return;
-            }
-            finalPhotos = [...finalPhotos, ...results.map((r) => r.public_url)];
+      // Reset form
+      setLogPhotos([]);
+      setLogNotes('');
+      setLogType(null);
+      // Reset form immediately — crew sees instant success
+      setLogPhotos([]);
+      setLogNotes('');
+      setLogType(null);
+      Vibration.vibrate([100, 50, 100]);
+
+      // Upload photos to R2 in background, then patch the entry
+      const photosToUpload = localUris.filter((p) => p.startsWith('file://') || p.startsWith('ph://'));
+      if (photosToUpload.length > 0) {
+        uploadPhotos(photosToUpload, jobId).then(async (results) => {
+          const failed = results.filter((r) => r.error);
+          if (failed.length > 0) {
+            console.warn(`${failed.length} photo(s) failed to upload for log entry ${id}`);
+            // Keep local URIs for failed ones so they can be retried
           }
-          setUploadProgress(null);
+          // Build final URL list: replace successful uploads, keep local URIs for failures
+          const finalPhotos = localUris.map((uri) => {
+            const uploaded = results.find((r) => r.uri === uri && r.public_url);
+            return uploaded ? uploaded.public_url : uri;
+          });
+          await db.execute(
+            `UPDATE daily_log_entries SET photos=?, synced=0 WHERE id=?`,
+            [JSON.stringify(finalPhotos), id]
+          );
+        }).catch((err) => {
+          console.error('Background photo upload failed:', err);
+        });
+      }
+    } finally {
+      setLogSubmitting(false);
+    }
+  }, [logType, logPhotos, logNotes, jobId, employeeId, db]);
 
-          const data = buildReportData('submitted');
-          data.photos = JSON.stringify(finalPhotos);
-          await upsertReport(data);
-          setPhotos(finalPhotos);
-          Vibration.vibrate([100, 50, 100]);
-        } finally {
-          setSubmitting(false);
-          setUploadProgress(null);
-        }
-      }},
-    ]);
-  }, [taskEntries, materialEntries, photos, notes, hours, jobId]);
-
-  if (isSubmitted) {
-    return (
-      <LinenBackground>
-        <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={styles.content}>
-          <View style={styles.submittedCard}>
-            <Text style={styles.submittedTitle}>REPORT SUBMITTED</Text>
-            <Text style={styles.submittedBody}>Today's report has been submitted to the manager approval queue.</Text>
-            <View style={styles.submittedMeta}>
-              <Text style={styles.submittedLabel}>Hours</Text>
-              <Text style={styles.submittedValue}>{fmtHrs(existingReport.hours_regular)}{existingReport.hours_ot > 0 ? ` + ${fmtHrs(existingReport.hours_ot)} OT` : ''}</Text>
-            </View>
-            <View style={styles.submittedMeta}>
-              <Text style={styles.submittedLabel}>Status</Text>
-              <View style={styles.statusBadge}><Text style={styles.statusText}>{existingReport.status === 'approved' ? 'APPROVED' : 'PENDING REVIEW'}</Text></View>
-            </View>
-          </View>
-        </ScrollView>
-      </LinenBackground>
-    );
-  }
-
+  // ── Render ──────────────────────────────────────────────
   return (
     <LinenBackground>
-      <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" nestedScrollEnabled>
-      <View style={styles.hoursCard}>
-        <Text style={styles.hoursTitle}>TODAY'S HOURS</Text>
-        <View style={styles.hoursRow}>
-          <View style={styles.hourBlock}><Text style={styles.hourValue}>{hours.regular}</Text><Text style={styles.hourLabel}>Regular</Text></View>
-          {hours.ot > 0 && <View style={styles.hourBlock}><Text style={[styles.hourValue, { color: C.amber }]}>{hours.ot}</Text><Text style={styles.hourLabel}>Overtime</Text></View>}
-          <View style={styles.hourBlock}><Text style={styles.hourValue}>{Math.round((hours.regular + hours.ot) * 10) / 10}</Text><Text style={styles.hourLabel}>Total</Text></View>
-        </View>
-      </View>
+      <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
 
-      <Text style={styles.sectionTitle}>TASK COMPLETION</Text>
-      {taskEntries.map((task, idx) => (
-        <View key={idx} style={styles.taskCard}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <Text style={[styles.taskName, { flex: 1 }]} numberOfLines={2}>{task.description || `Task ${idx + 1}`}</Text>
-            <TouchableOpacity onPress={() => removeTask(idx)} style={styles.removeBtn}><Text style={styles.removeBtnText}>X</Text></TouchableOpacity>
-          </View>
-          <View style={styles.taskFields}>
-            <View style={styles.fieldGroup}>
-              <Text style={styles.fieldLabel}>% TODAY</Text>
-              <TextInput style={styles.pctInput} value={String(task.pct_complete_today || '')} onChangeText={(v) => updateTask(idx, 'pct_complete_today', parseFloat(v) || 0)} keyboardType="numeric" placeholder="0" placeholderTextColor={C.textFaint} maxLength={3} />
-            </View>
-            <View style={styles.fieldGroup}>
-              <Text style={styles.fieldLabel}>CUMULATIVE %</Text>
-              <TextInput style={styles.pctInput} value={String(task.cumulative_pct || '')} onChangeText={(v) => updateTask(idx, 'cumulative_pct', parseFloat(v) || 0)} keyboardType="numeric" placeholder="0" placeholderTextColor={C.textFaint} maxLength={3} />
-            </View>
-          </View>
-          <TextInput style={styles.taskNoteInput} value={task.notes} onChangeText={(v) => updateTask(idx, 'notes', v)} placeholder="Task notes (optional)" placeholderTextColor={C.textFaint} multiline />
-        </View>
-      ))}
-      <TouchableOpacity style={styles.addBtn} onPress={addTask}><Text style={styles.addBtnText}>+ ADD TASK</Text></TouchableOpacity>
-
-      <Text style={[styles.sectionTitle, { marginTop: S.lg }]}>MATERIALS USED</Text>
-      {materialEntries.map((mat, idx) => (
-        <View key={idx} style={styles.materialRow}>
-          <TextInput style={styles.materialNameInput} value={mat.name} onChangeText={(v) => updateMaterialName(idx, v)} placeholder="Material name" placeholderTextColor={C.textFaint} />
-          <TextInput style={styles.materialQtyInput} value={String(mat.qty_used || '')} onChangeText={(v) => updateMaterial(idx, v)} keyboardType="numeric" placeholder="Qty" placeholderTextColor={C.textFaint} />
-          <TouchableOpacity onPress={() => removeMaterial(idx)} style={styles.removeBtn}><Text style={styles.removeBtnText}>X</Text></TouchableOpacity>
-        </View>
-      ))}
-      <TouchableOpacity style={styles.addBtn} onPress={addMaterial}><Text style={styles.addBtnText}>+ ADD MATERIAL</Text></TouchableOpacity>
-
-      <Text style={[styles.sectionTitle, { marginTop: S.lg }]}>PHOTOS</Text>
-      <View style={styles.photoRow}>
-        {photos.map((uri, idx) => (
-          <TouchableOpacity key={idx} style={styles.photoThumb} onLongPress={() => removePhoto(idx)}>
-            <Image source={{ uri }} style={styles.photoImage} />
+        {/* Section Toggle */}
+        <View style={styles.toggleRow}>
+          <TouchableOpacity style={[styles.toggleBtn, section === 'prt' && styles.toggleBtnActive]} onPress={() => setSection('prt')}>
+            <Text style={[styles.toggleText, section === 'prt' && styles.toggleTextActive]}>PRT</Text>
           </TouchableOpacity>
-        ))}
-      </View>
-      <View style={styles.photoBtns}>
-        <TouchableOpacity style={styles.photoBtn} onPress={takePhoto}><Text style={styles.photoBtnText}>TAKE PHOTO</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.photoBtn} onPress={pickPhoto}><Text style={styles.photoBtnText}>FROM LIBRARY</Text></TouchableOpacity>
-      </View>
-      <Text style={styles.photoHint}>Long-press a photo to remove it</Text>
+          <TouchableOpacity style={[styles.toggleBtn, section === 'log' && styles.toggleBtnActive]} onPress={() => setSection('log')}>
+            <Text style={[styles.toggleText, section === 'log' && styles.toggleTextActive]}>DAILY LOG</Text>
+          </TouchableOpacity>
+        </View>
 
-      <Text style={[styles.sectionTitle, { marginTop: S.lg }]}>NOTES <Text style={styles.required}>*REQUIRED</Text></Text>
-      <TextInput style={styles.notesInput} value={notes} onChangeText={setNotes} placeholder="Describe today's work, conditions, issues..." placeholderTextColor={C.textFaint} multiline textAlignVertical="top" />
+        {/* ═══ PRT Section ═══ */}
+        {section === 'prt' && (
+          <>
+            <Text style={styles.sectionTitle}>PRODUCTION RATE TRACKER</Text>
+            <Text style={styles.sectionHint}>Enter your daily % for each task. Hit the target or beat it.</Text>
 
-      <View style={styles.actionRow}>
-        <TouchableOpacity style={styles.draftBtn} onPress={saveDraft}><Text style={styles.draftBtnText}>SAVE DRAFT</Text></TouchableOpacity>
-        <TouchableOpacity style={[styles.submitBtn, submitting && { opacity: 0.5 }]} onPress={handleSubmit} disabled={submitting}>
-          <Text style={styles.submitBtnText}>
-            {uploadProgress ? `UPLOADING ${uploadProgress.done}/${uploadProgress.total}...` : submitting ? 'SUBMITTING...' : 'SUBMIT REPORT'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+            {prtSubmitted ? (
+              <View style={styles.submittedCard}>
+                <Text style={styles.submittedTitle}>PRT SUBMITTED</Text>
+                <Text style={styles.submittedBody}>Today's production rates have been recorded.</Text>
+                {parseJSON(existingReport?.tasks, []).map((t, idx) => (
+                  <View key={idx} style={styles.submittedTask}>
+                    <Text style={styles.submittedTaskName}>{t.description}</Text>
+                    <View style={styles.submittedPctRow}>
+                      <View style={styles.pctChip}>
+                        <Text style={styles.pctChipLabel}>TODAY</Text>
+                        <Text style={[styles.pctChipValue, t.pct_today >= t.target_pct ? { color: C.teal } : { color: C.amber }]}>{t.pct_today}%</Text>
+                      </View>
+                      <View style={styles.pctChip}>
+                        <Text style={styles.pctChipLabel}>TARGET</Text>
+                        <Text style={styles.pctChipValue}>{t.target_pct}%</Text>
+                      </View>
+                    </View>
+                    {t.notes ? <Text style={styles.submittedNotes}>{t.notes}</Text> : null}
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <>
+                {taskEntries.map((task, idx) => {
+                  const hit = task.pct_today >= task.target_pct;
+                  return (
+                    <View key={idx} style={styles.taskCard}>
+                      <Text style={styles.taskName}>{task.description || `Task ${idx + 1}`}</Text>
+
+                      {/* Target vs Actual */}
+                      <View style={styles.compareRow}>
+                        <View style={styles.compareBlock}>
+                          <Text style={styles.compareLabel}>TARGET</Text>
+                          <Text style={styles.compareTarget}>{task.target_pct}%</Text>
+                        </View>
+                        <View style={styles.compareBlock}>
+                          <Text style={styles.compareLabel}>TODAY</Text>
+                          <TextInput
+                            style={[styles.pctInput, hit && styles.pctInputHit]}
+                            value={String(task.pct_today || '')}
+                            onChangeText={(v) => updateTask(idx, 'pct_today', parseFloat(v) || 0)}
+                            keyboardType="numeric"
+                            placeholder="0"
+                            placeholderTextColor={C.textFaint}
+                            maxLength={3}
+                          />
+                        </View>
+                        <View style={styles.compareBlock}>
+                          {task.pct_today > 0 && (
+                            <View style={[styles.resultBadge, hit ? styles.resultHit : styles.resultMiss]}>
+                              <Text style={styles.resultText}>{hit ? 'ON TRACK' : 'BEHIND'}</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+
+                      {/* Progress bar */}
+                      <View style={styles.progressTrack}>
+                        <View style={[styles.progressTarget, { width: `${Math.min(task.target_pct, 100)}%` }]} />
+                        <View style={[styles.progressActual, hit ? styles.progressHit : styles.progressMiss, { width: `${Math.min(task.pct_today || 0, 100)}%` }]} />
+                      </View>
+
+                      {/* Notes — required */}
+                      <TextInput
+                        style={styles.taskNoteInput}
+                        value={task.notes}
+                        onChangeText={(v) => updateTask(idx, 'notes', v)}
+                        placeholder="Note required — what happened today"
+                        placeholderTextColor={C.textFaint}
+                        multiline
+                      />
+                    </View>
+                  );
+                })}
+
+                <View style={styles.actionRow}>
+                  <TouchableOpacity style={styles.draftBtn} onPress={savePRTDraft}>
+                    <Text style={styles.draftBtnText}>SAVE DRAFT</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.submitBtn, prtSubmitting && { opacity: 0.5 }]} onPress={submitPRT} disabled={prtSubmitting}>
+                    <Text style={styles.submitBtnText}>{prtSubmitting ? 'SUBMITTING...' : 'SUBMIT PRT'}</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </>
+        )}
+
+        {/* ═══ Daily Log Section ═══ */}
+        {section === 'log' && (
+          <>
+            <Text style={styles.sectionTitle}>DAILY LOG</Text>
+            <Text style={styles.sectionHint}>Photo + note entries throughout the day. SOD, MOD, EOD required.</Text>
+
+            {/* Status pills */}
+            <View style={styles.logStatusRow}>
+              {LOG_TYPES.map((lt) => {
+                const done = submittedTypes.has(lt.key);
+                return (
+                  <View key={lt.key} style={[styles.logStatusPill, done && styles.logStatusDone]}>
+                    <Text style={[styles.logStatusText, done && styles.logStatusTextDone]}>{lt.key}</Text>
+                    <Text style={styles.logStatusCheck}>{done ? '\u2713' : '\u25CB'}</Text>
+                  </View>
+                );
+              })}
+            </View>
+
+            {/* Submitted entries */}
+            {(logEntries || []).length > 0 && (
+              <View style={styles.logHistory}>
+                {(logEntries || []).map((entry) => {
+                  const photos = parseJSON(entry.photos, []);
+                  return (
+                    <View key={entry.id} style={styles.logEntryCard}>
+                      <View style={styles.logEntryHeader}>
+                        <View style={styles.logTypeBadge}><Text style={styles.logTypeText}>{entry.entry_type}</Text></View>
+                        <Text style={styles.logEntryTime}>{new Date(entry.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+                      </View>
+                      {photos.length > 0 && (
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.logPhotoScroll}>
+                          {photos.map((uri, i) => (
+                            <Image key={i} source={{ uri }} style={styles.logPhotoThumb} />
+                          ))}
+                        </ScrollView>
+                      )}
+                      <Text style={styles.logEntryNotes}>{entry.notes}</Text>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* New entry composer */}
+            {logType ? (
+              <View style={styles.composerCard}>
+                <View style={styles.composerHeader}>
+                  <View style={styles.logTypeBadge}><Text style={styles.logTypeText}>{logType}</Text></View>
+                  <TouchableOpacity onPress={() => { setLogType(null); setLogPhotos([]); setLogNotes(''); }}>
+                    <Text style={styles.composerCancel}>CANCEL</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Photos */}
+                {logPhotos.length > 0 && (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.logPhotoScroll}>
+                    {logPhotos.map((uri, i) => (
+                      <TouchableOpacity key={i} onLongPress={() => setLogPhotos(prev => prev.filter((_, idx) => idx !== i))}>
+                        <Image source={{ uri }} style={styles.logPhotoThumb} />
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                )}
+
+                <View style={styles.photoBtns}>
+                  <TouchableOpacity style={styles.photoBtn} onPress={() => takePhoto(setLogPhotos)}>
+                    <Text style={styles.photoBtnText}>TAKE PHOTO</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.photoBtn} onPress={() => pickPhoto(setLogPhotos)}>
+                    <Text style={styles.photoBtnText}>FROM LIBRARY</Text>
+                  </TouchableOpacity>
+                </View>
+                {logPhotos.length > 0 && <Text style={styles.photoHint}>Long-press a photo to remove</Text>}
+
+                <TextInput
+                  style={styles.logNoteInput}
+                  value={logNotes}
+                  onChangeText={setLogNotes}
+                  placeholder={LOG_TYPES.find(l => l.key === logType)?.hint || 'Describe what you see...'}
+                  placeholderTextColor={C.textFaint}
+                  multiline
+                  textAlignVertical="top"
+                />
+
+                <TouchableOpacity
+                  style={[styles.submitBtn, logSubmitting && { opacity: 0.5 }]}
+                  onPress={submitLogEntry}
+                  disabled={logSubmitting}
+                >
+                  <Text style={styles.submitBtnText}>
+                    {logSubmitting ? 'SAVING...' : `SUBMIT ${logType}`}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.logButtons}>
+                {LOG_TYPES.map((lt) => (
+                  <TouchableOpacity key={lt.key} style={[styles.logStartBtn, submittedTypes.has(lt.key) && styles.logStartBtnDone]} onPress={() => setLogType(lt.key)}>
+                    <Text style={styles.logStartBtnLabel}>{lt.label}</Text>
+                    <Text style={styles.logStartBtnHint}>{submittedTypes.has(lt.key) ? 'Add another' : lt.hint}</Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity style={styles.logStartBtn} onPress={() => setLogType('OTHER')}>
+                  <Text style={styles.logStartBtnLabel}>+ ADD ENTRY</Text>
+                  <Text style={styles.logStartBtnHint}>Extra photos and notes anytime</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </>
+        )}
+
       </ScrollView>
     </LinenBackground>
   );
@@ -314,49 +458,89 @@ function generateId() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: C.linen },
   content: { padding: S.md, paddingBottom: 100 },
-  hoursCard: { backgroundColor: C.dark, borderRadius: 10, padding: S.md, marginBottom: S.lg },
-  hoursTitle: { fontFamily: F.display, fontSize: 12, color: C.textFaint, letterSpacing: 2, marginBottom: S.sm, textAlign: 'center' },
-  hoursRow: { flexDirection: 'row', justifyContent: 'space-evenly' },
-  hourBlock: { alignItems: 'center' },
-  hourValue: { fontFamily: F.display, fontSize: 28, color: C.teal },
-  hourLabel: { fontFamily: F.body, fontSize: 12, color: C.textFaint, marginTop: 2 },
-  sectionTitle: { fontFamily: F.display, fontSize: 13, color: C.textMuted, letterSpacing: 2, marginBottom: S.sm },
-  required: { fontFamily: F.bodyMed, fontSize: 11, color: C.red, letterSpacing: 1 },
-  taskCard: { backgroundColor: C.linenCard, borderRadius: 10, padding: S.md, borderWidth: 1, borderColor: C.borderStrong, marginBottom: S.sm },
+
+  // Toggle
+  toggleRow: { flexDirection: 'row', backgroundColor: C.linenDeep, borderRadius: 10, padding: 3, marginBottom: S.lg, borderWidth: 1, borderColor: C.borderStrong },
+  toggleBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8 },
+  toggleBtnActive: { backgroundColor: C.dark },
+  toggleText: { fontFamily: F.display, fontSize: 14, color: C.textHead, letterSpacing: 2 },
+  toggleTextActive: { color: C.teal },
+
+  // Shared
+  sectionTitle: { fontFamily: F.display, fontSize: 14, color: C.textMuted, letterSpacing: 2, marginBottom: 4 },
+  sectionHint: { fontFamily: F.body, fontSize: 13, color: C.textFaint, marginBottom: S.md, lineHeight: 20 },
+
+  // PRT
+  taskCard: { backgroundColor: C.linenCard, borderRadius: 10, padding: S.md, borderWidth: 1, borderColor: C.borderStrong, marginBottom: S.md },
   taskName: { fontFamily: F.bodySemi, fontSize: 15, color: C.textHead, marginBottom: S.sm },
-  taskFields: { flexDirection: 'row', gap: S.sm, marginBottom: S.sm },
-  fieldGroup: { flex: 1 },
-  fieldLabel: { fontFamily: F.display, fontSize: 11, color: C.textMuted, letterSpacing: 1, marginBottom: 4 },
-  pctInput: { backgroundColor: C.linenDeep, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 14, fontFamily: F.bodyMed, fontSize: 18, color: C.textHead, textAlign: 'center' },
-  taskNoteInput: { backgroundColor: C.linenDeep, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontFamily: F.body, fontSize: 14, color: C.textBody, minHeight: 40 },
-  addBtn: { borderWidth: 1, borderColor: C.borderStrong, borderStyle: 'dashed', borderRadius: 8, paddingVertical: 12, alignItems: 'center', marginBottom: S.sm },
-  addBtnText: { fontFamily: F.displayMed, fontSize: 13, color: C.tealDark, letterSpacing: 1 },
-  materialRow: { flexDirection: 'row', gap: S.sm, marginBottom: S.sm },
-  materialNameInput: { flex: 1, backgroundColor: C.linenCard, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontFamily: F.body, fontSize: 14, color: C.textBody, borderWidth: 1, borderColor: C.borderStrong },
-  materialQtyInput: { width: 80, backgroundColor: C.linenCard, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontFamily: F.bodyMed, fontSize: 16, color: C.textHead, textAlign: 'center', borderWidth: 1, borderColor: C.borderStrong },
-  removeBtn: { width: 28, height: 28, borderRadius: 14, backgroundColor: C.linenDeep, alignItems: 'center', justifyContent: 'center', marginLeft: S.sm },
-  removeBtnText: { fontFamily: F.display, fontSize: 12, color: C.textMuted },
-  photoRow: { flexDirection: 'row', flexWrap: 'wrap', gap: S.sm, marginBottom: S.sm },
-  photoThumb: { width: 80, height: 80, borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: C.borderStrong },
-  photoImage: { width: '100%', height: '100%' },
+  compareRow: { flexDirection: 'row', alignItems: 'center', gap: S.sm, marginBottom: S.sm },
+  compareBlock: { flex: 1, alignItems: 'center' },
+  compareLabel: { fontFamily: F.display, fontSize: 10, color: C.textFaint, letterSpacing: 1.5, marginBottom: 4 },
+  compareTarget: { fontFamily: F.display, fontSize: 22, color: C.textMuted },
+  pctInput: { backgroundColor: C.linenDeep, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, fontFamily: F.display, fontSize: 22, color: C.textHead, textAlign: 'center', width: 80 },
+  pctInputHit: { borderWidth: 2, borderColor: C.teal },
+  resultBadge: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
+  resultHit: { backgroundColor: C.teal },
+  resultMiss: { backgroundColor: C.amber },
+  resultText: { fontFamily: F.display, fontSize: 10, color: C.dark, letterSpacing: 1 },
+  progressTrack: { height: 8, backgroundColor: C.linenDeep, borderRadius: 4, overflow: 'hidden', marginBottom: S.sm },
+  progressTarget: { position: 'absolute', height: '100%', backgroundColor: 'rgba(136,124,110,0.4)', borderRadius: 4 },
+  progressActual: { height: '100%', borderRadius: 4 },
+  progressHit: { backgroundColor: C.teal },
+  progressMiss: { backgroundColor: C.amber },
+  taskNoteInput: { backgroundColor: C.linenDeep, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontFamily: F.body, fontSize: 14, color: C.textBody, minHeight: 44 },
+
+  actionRow: { flexDirection: 'row', gap: S.sm, marginTop: S.sm },
+  draftBtn: { flex: 1, backgroundColor: C.linenDeep, borderRadius: 10, paddingVertical: 16, alignItems: 'center' },
+  draftBtnText: { fontFamily: F.display, fontSize: 14, color: C.textBody, letterSpacing: 1 },
+  submitBtn: { flex: 2, backgroundColor: C.dark, borderRadius: 10, paddingVertical: 16, alignItems: 'center' },
+  submitBtnText: { fontFamily: F.display, fontSize: 14, color: C.teal, letterSpacing: 1 },
+
+  // PRT Submitted
+  submittedCard: { backgroundColor: C.linenCard, borderRadius: 10, padding: S.lg, borderWidth: 1, borderColor: C.borderStrong },
+  submittedTitle: { fontFamily: F.display, fontSize: 20, color: C.textHead, letterSpacing: 2, marginBottom: S.sm, textAlign: 'center' },
+  submittedBody: { fontFamily: F.body, fontSize: 14, color: C.textBody, textAlign: 'center', marginBottom: S.md },
+  submittedTask: { borderTopWidth: 1, borderTopColor: C.border, paddingVertical: S.sm },
+  submittedTaskName: { fontFamily: F.bodySemi, fontSize: 14, color: C.textHead, marginBottom: 4 },
+  submittedPctRow: { flexDirection: 'row', gap: S.md, marginBottom: 4 },
+  pctChip: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  pctChipLabel: { fontFamily: F.display, fontSize: 10, color: C.textFaint, letterSpacing: 1 },
+  pctChipValue: { fontFamily: F.display, fontSize: 16, color: C.textHead },
+  submittedNotes: { fontFamily: F.body, fontSize: 13, color: C.textMuted, fontStyle: 'italic' },
+
+  // Daily Log
+  logStatusRow: { flexDirection: 'row', gap: S.sm, marginBottom: S.md },
+  logStatusPill: { flex: 1, backgroundColor: C.linenCard, borderRadius: 8, paddingVertical: 8, alignItems: 'center', borderWidth: 1, borderColor: C.borderStrong, flexDirection: 'row', justifyContent: 'center', gap: 6 },
+  logStatusDone: { backgroundColor: C.dark, borderColor: C.teal },
+  logStatusText: { fontFamily: F.display, fontSize: 12, color: C.textMuted, letterSpacing: 1 },
+  logStatusTextDone: { color: C.teal },
+  logStatusCheck: { fontFamily: F.body, fontSize: 14, color: C.teal },
+
+  logHistory: { marginBottom: S.md },
+  logEntryCard: { backgroundColor: C.linenCard, borderRadius: 10, padding: S.md, borderWidth: 1, borderColor: C.border, marginBottom: S.sm },
+  logEntryHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: S.sm },
+  logTypeBadge: { backgroundColor: C.dark, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 3 },
+  logTypeText: { fontFamily: F.display, fontSize: 12, color: C.teal, letterSpacing: 1.5 },
+  logEntryTime: { fontFamily: F.body, fontSize: 13, color: C.textFaint },
+  logPhotoScroll: { marginBottom: S.sm, maxHeight: 80 },
+  logPhotoThumb: { width: 72, height: 72, borderRadius: 8, marginRight: 6 },
+  logEntryNotes: { fontFamily: F.body, fontSize: 14, color: C.textBody, lineHeight: 20 },
+
+  logButtons: { gap: S.sm },
+  logStartBtn: { backgroundColor: C.linenCard, borderRadius: 10, paddingVertical: 16, paddingHorizontal: S.md, borderWidth: 1, borderColor: C.borderStrong },
+  logStartBtnDone: { borderColor: C.teal, borderLeftWidth: 3 },
+  logStartBtnLabel: { fontFamily: F.display, fontSize: 15, color: C.textHead, letterSpacing: 1.5, marginBottom: 2 },
+  logStartBtnHint: { fontFamily: F.body, fontSize: 13, color: C.textFaint },
+
+  composerCard: { backgroundColor: C.linenCard, borderRadius: 10, padding: S.md, borderWidth: 1, borderColor: C.teal },
+  composerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: S.md },
+  composerCancel: { fontFamily: F.displayMed, fontSize: 13, color: C.textMuted, letterSpacing: 1 },
+
   photoBtns: { flexDirection: 'row', gap: S.sm, marginBottom: 4 },
-  photoBtn: { flex: 1, backgroundColor: C.linenCard, borderRadius: 8, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: C.borderStrong },
-  photoBtnText: { fontFamily: F.displayMed, fontSize: 13, color: C.textBody, letterSpacing: 1 },
-  photoHint: { fontFamily: F.body, fontSize: 11, color: C.textFaint, textAlign: 'center', marginTop: 2 },
-  notesInput: { backgroundColor: C.linenCard, borderRadius: 10, padding: S.md, fontFamily: F.body, fontSize: 15, color: C.textBody, minHeight: 120, borderWidth: 1, borderColor: C.borderStrong, lineHeight: 22 },
-  actionRow: { flexDirection: 'row', gap: S.sm, marginTop: S.lg },
-  draftBtn: { flex: 1, backgroundColor: C.linenDeep, borderRadius: 10, paddingVertical: 18, alignItems: 'center' },
-  draftBtnText: { fontFamily: F.display, fontSize: 15, color: C.textBody, letterSpacing: 1 },
-  submitBtn: { flex: 2, backgroundColor: C.dark, borderRadius: 10, paddingVertical: 18, alignItems: 'center' },
-  submitBtnText: { fontFamily: F.display, fontSize: 15, color: C.teal, letterSpacing: 1 },
-  submittedCard: { backgroundColor: C.linenCard, borderRadius: 10, padding: S.lg, borderWidth: 1, borderColor: C.borderStrong, alignItems: 'center' },
-  submittedTitle: { fontFamily: F.display, fontSize: 22, color: C.textHead, letterSpacing: 2, marginBottom: S.sm },
-  submittedBody: { fontFamily: F.body, fontSize: 14, color: C.textBody, textAlign: 'center', lineHeight: 22, marginBottom: S.md },
-  submittedMeta: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', paddingVertical: S.sm, borderTopWidth: 1, borderTopColor: C.border },
-  submittedLabel: { fontFamily: F.bodyMed, fontSize: 13, color: C.textMuted },
-  submittedValue: { fontFamily: F.bodySemi, fontSize: 14, color: C.textHead },
-  statusBadge: { backgroundColor: C.dark, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 3 },
-  statusText: { fontFamily: F.bodyMed, fontSize: 12, color: C.teal, letterSpacing: 0.5 },
+  photoBtn: { flex: 1, backgroundColor: C.linenDeep, borderRadius: 8, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: C.borderStrong },
+  photoBtnText: { fontFamily: F.displayMed, fontSize: 12, color: C.textBody, letterSpacing: 1 },
+  photoHint: { fontFamily: F.body, fontSize: 11, color: C.textFaint, textAlign: 'center', marginTop: 2, marginBottom: S.sm },
+
+  logNoteInput: { backgroundColor: C.linenDeep, borderRadius: 10, padding: S.md, fontFamily: F.body, fontSize: 15, color: C.textBody, minHeight: 100, borderWidth: 1, borderColor: C.borderStrong, lineHeight: 22, marginBottom: S.md },
 });
