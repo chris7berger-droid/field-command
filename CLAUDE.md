@@ -141,3 +141,16 @@ supabase functions deploy upload-photo --no-verify-jwt
 - Field Command records reality — it does not make financial decisions
 - Always deploy edge functions with `--no-verify-jwt`
 - PostgREST caps at 1000 rows — paginate with `.range()` if querying Supabase directly
+
+---
+
+## Security Rules
+
+1. **Row Level Security (RLS) policies** — before writing or editing ANY SQL
+   that touches RLS, policies, anon access, public pages, or token-gated
+   reads, read `CLAUDE_RLS.md` in the repo root. It contains the rules for
+   correct policy patterns, the 2026-04-26 sales-command incident
+   anti-pattern, the 6-gate deploy requirements, and notes specific to
+   field-command's PowerSync sync layer. The anti-pattern in
+   `CLAUDE_RLS.md` is the most common RLS mistake — do not write policies
+   that match it.
