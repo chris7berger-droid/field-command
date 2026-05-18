@@ -92,6 +92,16 @@ supabase/
 - JSONB fields stored as text in SQLite (field_sow, materials, tasks, photos, etc.)
 - `prevailing_wage` lives on both call_log (denormalized) and proposal_wtc
 
+## Pushing Migrations
+
+Always use `npm run db:push` instead of raw `supabase db push`. The wrapper
+runs a collision check against the prod ledger before pushing — it catches
+timestamp collisions across repos sharing the same Supabase project. If it
+reports a collision, rename your migration file to the next free timestamp.
+If the ledger is unreachable, re-auth with `supabase login` and
+`supabase link --project-ref pbgvgjjuhnpsumnowuym`.
+Canonical convention doc: `~/sales-command/docs/plans/o7_migration_coordination.md`.
+
 ## Design System (Command Suite)
 Must match the visual design across Sales Command, Schedule Command, and AR Command.
 
