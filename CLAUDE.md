@@ -5,6 +5,18 @@ Field Command is a crew-facing mobile app for construction subcontractors. It's 
 
 Field Command is also a **standalone product**: mobile app + web dashboard (not yet built). When standalone, the web dashboard replaces Schedule Command's approval queue and Sales Command's Field SOW builder.
 
+## Command Suite Shared-Data Contract
+
+The Command Suite is ONE product with four drivers (Sales, Schedule, Field, AR)
+on one shared Supabase DB — not four separately-sellable apps (reframed
+2026-05-28). Any data that crosses driver boundaries must have a declared
+**source of truth** (one writer), **canonical location** (no drifting copies),
+**copy-vs-reference** policy, and **sync pipe** (PostgREST for web vs PowerSync
+for Field's offline mobile — the one real runtime boundary). Field is the
+offline-mobile side of that boundary. Before wiring any cross-driver field,
+answer those four. Full contract + open decisions:
+`~/sch-command/docs/plans/command_suite_shared_data_contract.md`.
+
 ## Team
 - **Chris** — developer and primary user
 - **Office staff** — Joe, John, Denise (will use web dashboard)
