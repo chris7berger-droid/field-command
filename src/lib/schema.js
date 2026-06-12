@@ -164,6 +164,26 @@ const jobs = new Table({
   deleted_at:         column.text,
 });
 
+// job_wtcs — per-WTC dated SOW rows for a job (canonical, replaces the
+// proposal_wtc fallback read). One row per WTC sent to Schedule. Read-only;
+// synced via the all_data bucket (SELECT * FROM job_wtcs). PowerSync id is the
+// implicit uuid PK. job_id is declared integer so TasksTab can query
+// WHERE job_id = (SELECT id FROM jobs WHERE call_log_id = ?) — job_wtcs.job_id
+// (int8) equals the Field-local jobs.id (jobs syncs `job_id AS id`). See plan
+// §F1/§F2. start_date/end_date are nullable upstream ("dates TBD", §6.6).
+const job_wtcs = new Table({
+  job_id:             column.integer,
+  proposal_wtc_id:    column.text,
+  work_type_id:       column.integer,
+  work_type_name:     column.text,
+  position:           column.integer,
+  field_sow:          column.text, // JSONB → text in SQLite
+  material_status:    column.text,
+  start_date:         column.text,
+  end_date:           column.text,
+  created_at:         column.text,
+});
+
 // ── Read-Write Tables (sync up) ────────────────────────────────────
 
 const time_punches = new Table(
@@ -263,6 +283,7 @@ export const AppSchema = new Schema({
   team_members,
   job_crew,
   jobs,
+  job_wtcs,
   time_punches,
   daily_production_reports,
   daily_log_entries,
