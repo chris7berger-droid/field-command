@@ -23,6 +23,19 @@ export function fmtD(d) {
   });
 }
 
+// Format date string to "Mon Jun 16" (weekday + month + day, no year) — used
+// for the Field day-pill labels. Returns null on empty so callers can detect
+// undated days. Parses as local midnight (T00:00:00) to avoid a TZ day-shift.
+export function fmtDayLabel(d) {
+  if (!d) return null;
+  const date = new Date(d + 'T00:00:00');
+  return date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
 // Today's date as YYYY-MM-DD
 export function tod() {
   return new Date().toISOString().slice(0, 10);
