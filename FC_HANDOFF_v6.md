@@ -18,6 +18,49 @@ tabs, Test Task 1 / TARGET 20%, Vocomp 25 sealer, Production Target 10,000 SQFT)
 
 ---
 
+## ⚠ AMENDMENT (later, same session) — the #10044 smoke was a FALSE POSITIVE
+
+Read this before trusting the TL;DR above. After closing D1 on the #10044
+smoke, a deliberate **multi-WTC test (job #10159)** exposed that the smoke had
+**not** actually exercised the canonical path:
+
+- **#10044 was rendering the legacy `jobs.field_sow` fallback, not `job_wtcs`.**
+  `TasksTab` silently falls back to `jobs.field_sow` when no `job_wtcs` rows are
+  present — and there were none on the device.
+- **Root cause:** `job_wtcs` was missing from BOTH (a) the **deployed dashboard
+  sync rules** — the `- SELECT * FROM job_wtcs` line was absent; the draft we
+  thought we deployed got dropped during the deprovision/reprovision churn (the
+  repo's `powersync-sync-rules.yaml` had the line, but the *dashboard*, which is
+  what runs, did not) — and (b) the Postgres **`powersync` publication**.
+- **How it was caught:** read the simulator's local PowerSync SQLite directly
+  (`<app container>/Library/field-command.db`) — `job_wtcs` count was **0** while
+  `jobs`=81, `proposal_wtc`=288, etc. A single-WTC job hid this because the
+  fallback rendered something plausible; a two-WTC job did not.
+
+**The real fix (both required):**
+1. Added `- SELECT * FROM job_wtcs` to the **dashboard** sync rules (Sync Rules
+   editor → Deploy).
+2. Ran `ALTER PUBLICATION powersync ADD TABLE job_wtcs;` in the Supabase SQL
+   editor (publication membership is required for logical replication to carry
+   the table — the sync rule buckets it to clients, the publication replicates
+   it from Postgres; you need both).
+3. Redeployed the sync rules to trigger the backfill snapshot.
+→ device `job_wtcs` 0 → 2.
+
+**NOW genuinely verified (F2 + F3):** job #10159 has two WTCs — `100% Solids
+Epoxy` and `Caulking` — both working **6/23 and 6/24**. On the Field SOW tab the
+shared 6/23 day shows **both trades' tasks merged** (`mergeDaysByDate`), reading
+canonical `job_wtcs`. Confirmed by device-DB read (the per-WTC dated day
+structure) and on-screen. Artifact: `fc_d1_sow_merge_20260616.png`.
+
+**This spawned three follow-ups (now in BACKLOG): FE1** (label which WTC/trade
+each task belongs to on merged days — currently a flat unlabeled list),
+**B2** (crew/hours rollup on merged days is MAX-crew + SUM-hours, internally
+inconsistent — needs Jonah's call), **D2** (capture the `ALTER PUBLICATION` as a
+migration; it was run live and isn't in the ledger).
+
+---
+
 ## What was blocking it (the four layers, in the order they surfaced)
 
 PowerSync's Development instance had been parked since April; reconnecting it
