@@ -16,6 +16,7 @@ bucket_definitions:
         OR stage = 'mobilized'
         OR stage = 'in_progress'
       - SELECT * FROM proposal_wtc
+      - SELECT * FROM job_wtcs
       - SELECT * FROM team_members
       - SELECT * FROM job_crew
       - SELECT job_id AS id, * FROM jobs

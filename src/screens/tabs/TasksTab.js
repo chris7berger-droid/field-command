@@ -1,7 +1,16 @@
 /**
  * Tasks Tab — Daily Task View (Native Only)
- * Reads jobs.field_sow (synced via PowerSync) for the current job.
- * Falls back to proposal_wtc.field_sow for legacy jobs without a jobs row.
+ *
+ * Primary read: job_wtcs (synced via PowerSync) — the canonical, dated, per-WTC
+ * SOW. One row per WTC sent to Schedule; each row's field_sow is an array of
+ * day objects. We gather ALL of a job's WTCs and merge their days into one
+ * calendar-date-centric view (F3): days that share a calendar date collapse
+ * into one group (tasks/materials concatenated, crew MAX, hours SUM), undated
+ * days trail as "Day N (TBD)".
+ *
+ * Legacy fallback: jobs.field_sow mirror, for pre-vertical jobs that have no
+ * job_wtcs rows. The old proposal_wtc fallback is removed — it was an unjoined
+ * `LIMIT 10 → [0]` read that picked an arbitrary WTC. See plan §F2/§F3.
  */
 import React, { useState, useMemo } from 'react';
 import {
@@ -9,39 +18,116 @@ import {
 } from 'react-native';
 import { useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
-import { parseJSON, fmtPct, fmtHrs } from '../../lib/utils';
+import { parseJSON, fmtPct, fmtHrs, fmtDayLabel } from '../../lib/utils';
 import LinenBackground from '../../components/LinenBackground';
 
+// Merge per-WTC day arrays into calendar-date groups (F3 spec).
+//   taggedDays: day objects each carrying a `work_type_name` (its source WTC).
+// Returns { days: [mergedDay], allTbd }. A mergedDay is:
+//   { key, label, date|null, isTbd, crew_count, hours_planned, tasks[], materials[] }
+// Each task keeps a `work_type_name` tag so the merged list still shows its trade.
+export function mergeDaysByDate(taggedDays) {
+  const dated = [];
+  const undated = [];
+  for (const day of taggedDays) {
+    if (day && day.date) dated.push(day);
+    else if (day) undated.push(day);
+  }
+  const allTbd = dated.length === 0;
+
+  // Group dated days by ISO date; ISO strings sort chronologically.
+  const byDate = new Map();
+  for (const day of dated) {
+    if (!byDate.has(day.date)) byDate.set(day.date, []);
+    byDate.get(day.date).push(day);
+  }
+
+  const merged = [];
+  for (const date of [...byDate.keys()].sort()) {
+    merged.push(buildMergedDay(byDate.get(date), {
+      key: `d-${date}`, date, label: fmtDayLabel(date), isTbd: false,
+    }));
+  }
+
+  // Undated days: trailing "Day N (TBD)" pills in original sequence. When EVERY
+  // day is undated (e.g. a "dates TBD" send Schedule hasn't dated), fall back to
+  // plain "Day N" labels — the render shows a Dates-TBD banner instead.
+  undated.forEach((day, i) => {
+    const seq = i + 1;
+    const label = allTbd ? (day.day_label || `Day ${seq}`) : `Day ${seq} (TBD)`;
+    merged.push(buildMergedDay([day], { key: `tbd-${i}`, date: null, label, isTbd: true }));
+  });
+
+  return { days: merged, allTbd };
+}
+
+function buildMergedDay(group, meta) {
+  const tasks = [];
+  const materials = [];
+  let crew = 0;
+  let hours = 0;
+  for (const day of group) {
+    const wt = day.work_type_name || null;
+    for (const t of (day.tasks || [])) tasks.push({ ...t, work_type_name: wt });
+    for (const m of (day.materials || [])) materials.push(m);
+    // crew_count = MAX across the work types landing this date, NOT sum — two
+    // work types the same day typically share one crew, so summing double-counts.
+    // ⚠ PENDING JONAH confirmation (MAX vs SUM during build/smoke). If same-day
+    // work types can be genuinely additive (distinct crews), switch to += here;
+    // the per-task work_type_name tag keeps both computable.
+    crew = Math.max(crew, Number(day.crew_count) || 0);
+    hours += Number(day.hours_planned) || 0; // hours additive even when crew shared
+  }
+  return { ...meta, crew_count: crew, hours_planned: hours, tasks, materials };
+}
+
 export default function TasksTab({ jobId }) {
-  // Primary: read field_sow from jobs table (linked via call_log_id = jobId)
+  // Primary: canonical dated SOW from job_wtcs. job_wtcs.job_id (int8) equals the
+  // Field-local jobs.id (jobs syncs `job_id AS id`), so resolve it via call_log_id.
+  const { data: wtcRows, isLoading: wtcLoading } = useQuery(
+    `SELECT field_sow, work_type_name FROM job_wtcs
+      WHERE job_id = (SELECT id FROM jobs WHERE call_log_id = ?)
+      ORDER BY position`,
+    [jobId]
+  );
+
+  // Legacy fallback: jobs.field_sow mirror for pre-vertical jobs with no job_wtcs.
   const { data: jobRows, isLoading: jobsLoading } = useQuery(
     `SELECT field_sow, size, size_unit FROM jobs WHERE call_log_id = ? LIMIT 1`,
     [jobId]
   );
 
-  // Fallback: legacy path via proposal_wtc for jobs without a jobs row
-  const { data: wtcRows, isLoading: wtcLoading } = useQuery(
-    `SELECT field_sow, size, unit FROM proposal_wtc WHERE field_sow IS NOT NULL LIMIT 10`
-  );
-
-  const isLoading = jobsLoading || wtcLoading;
+  const isLoading = wtcLoading || jobsLoading;
   const jobRow = jobRows?.[0] || null;
-  const wtc = wtcRows?.[0] || null;
-  const fieldSow = useMemo(() => {
-    if (jobRow?.field_sow) return parseJSON(jobRow.field_sow, []);
-    if (wtc?.field_sow) return parseJSON(wtc.field_sow, []);
-    return [];
-  }, [jobRow, wtc]);
+
+  const { days, allTbd } = useMemo(() => {
+    // Primary: gather every WTC's days, tagged with its work type.
+    if (wtcRows && wtcRows.length > 0) {
+      const tagged = [];
+      for (const w of wtcRows) {
+        for (const day of parseJSON(w.field_sow, [])) {
+          tagged.push({ ...day, work_type_name: w.work_type_name });
+        }
+      }
+      return mergeDaysByDate(tagged);
+    }
+    // Legacy: single jobs.field_sow array, no work-type tag.
+    if (jobRow?.field_sow) {
+      const tagged = parseJSON(jobRow.field_sow, []).map((d) => ({ ...d, work_type_name: null }));
+      return mergeDaysByDate(tagged);
+    }
+    return { days: [], allTbd: false };
+  }, [wtcRows, jobRow]);
 
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
   const [expandedMat, setExpandedMat] = useState(null); // idx of expanded material
-  const currentDay = fieldSow[selectedDayIdx] || null;
+  const currentDay = days[selectedDayIdx] || null;
 
   if (isLoading) {
     return <View style={styles.center}><Text style={styles.loadingText}>Loading tasks...</Text></View>;
   }
 
-  if (fieldSow.length === 0) {
+  if (days.length === 0) {
     return (
       <View style={styles.center}>
         <View style={styles.emptyCard}>
@@ -57,11 +143,17 @@ export default function TasksTab({ jobId }) {
 
   return (
     <LinenBackground><ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={styles.content}>
+      {allTbd && (
+        <View style={styles.tbdBanner}>
+          <Text style={styles.tbdBannerText}>DATES TBD — schedule hasn't assigned calendar dates yet</Text>
+        </View>
+      )}
+
       {/* Day Selector */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dayScroll} contentContainerStyle={styles.dayScrollContent}>
-        {fieldSow.map((day, idx) => (
-          <TouchableOpacity key={day.id || idx} style={[styles.dayPill, idx === selectedDayIdx && styles.dayPillActive]} onPress={() => setSelectedDayIdx(idx)}>
-            <Text style={[styles.dayPillText, idx === selectedDayIdx && styles.dayPillTextActive]}>{day.day_label || `Day ${idx + 1}`}</Text>
+        {days.map((day, idx) => (
+          <TouchableOpacity key={day.key} style={[styles.dayPill, idx === selectedDayIdx && styles.dayPillActive]} onPress={() => setSelectedDayIdx(idx)}>
+            <Text style={[styles.dayPillText, idx === selectedDayIdx && styles.dayPillTextActive]}>{day.label}</Text>
           </TouchableOpacity>
         ))}
       </ScrollView>
@@ -69,7 +161,7 @@ export default function TasksTab({ jobId }) {
       {currentDay && (
         <>
           <View style={styles.dayHeader}>
-            <Text style={styles.dayTitle}>{currentDay.day_label || `Day ${selectedDayIdx + 1}`}</Text>
+            <Text style={styles.dayTitle}>{currentDay.label}</Text>
             <View style={styles.dayMeta}>
               {currentDay.crew_count > 0 && <View style={styles.metaChip}><Text style={styles.metaText}>{currentDay.crew_count} crew</Text></View>}
               {currentDay.hours_planned > 0 && <View style={styles.metaChip}><Text style={styles.metaText}>{fmtHrs(currentDay.hours_planned)}</Text></View>}
@@ -86,6 +178,7 @@ export default function TasksTab({ jobId }) {
                   <Text style={styles.taskDesc} numberOfLines={2}>{task.description || 'Untitled task'}</Text>
                   <View style={styles.pctBadge}><Text style={styles.pctLabel}>TARGET </Text><Text style={styles.pctText}>{fmtPct(task.pct_complete)}</Text></View>
                 </View>
+                {task.work_type_name ? <Text style={styles.wtTag}>{task.work_type_name}</Text> : null}
                 <View style={styles.progressTrack}>
                   <View style={[styles.progressFill, { width: `${Math.min(task.pct_complete || 0, 100)}%` }]} />
                 </View>
@@ -117,10 +210,10 @@ export default function TasksTab({ jobId }) {
             </>
           )}
 
-          {(jobRow?.size > 0 || wtc?.size > 0) && (
+          {jobRow?.size > 0 && (
             <View style={styles.targetCard}>
               <Text style={styles.targetLabel}>PRODUCTION TARGET</Text>
-              <Text style={styles.targetValue}>{Number(jobRow?.size || wtc?.size).toLocaleString()} {jobRow?.size_unit || wtc?.unit || ''}</Text>
+              <Text style={styles.targetValue}>{Number(jobRow.size).toLocaleString()} {jobRow.size_unit || ''}</Text>
               <Text style={styles.targetSub}>Total job scope</Text>
             </View>
           )}
@@ -152,6 +245,9 @@ const styles = StyleSheet.create({
   metaText: { fontFamily: F.bodyMed, fontSize: 12, color: C.teal },
   sectionTitle: { fontFamily: F.display, fontSize: 13, color: C.textMuted, letterSpacing: 2, marginBottom: S.sm },
   noItems: { fontFamily: F.body, fontSize: 14, color: C.textFaint, fontStyle: 'italic' },
+  tbdBanner: { backgroundColor: C.dark, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8, marginBottom: S.md },
+  tbdBannerText: { fontFamily: F.displayMed, fontSize: 12, color: C.teal, letterSpacing: 1 },
+  wtTag: { fontFamily: F.display, fontSize: 10, color: C.textMuted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: S.sm },
   taskCard: { backgroundColor: C.linenCard, borderRadius: 10, padding: S.md, borderWidth: 1, borderColor: C.borderStrong, marginBottom: S.sm },
   taskTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: S.sm },
   taskDesc: { fontFamily: F.bodySemi, fontSize: 15, color: C.textHead, flex: 1, marginRight: S.sm, lineHeight: 22 },
