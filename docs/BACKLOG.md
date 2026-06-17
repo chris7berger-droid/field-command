@@ -5,7 +5,7 @@ that completes, defers, or discovers an item. Status values: `Open`,
 `In Progress`, `Blocked`, `Done` (move Done items to the Completed Log
 at the bottom and out of the active table within a session or two).
 
-Last updated: 2026-06-16 (Amended **D1** — reprovision attempt surfaced a stale PowerSync→Supabase DB credential ("password authentication failed for user postgres"); fixing it is now step 0 of the Field-launch deploy. SOW travel logic proven offline via F3 merge. Prior: 2026-06-14 filed D1 (deferred PowerSync deploy + F1/F2/F3 smoke); 2026-05-27 initial file with **B1**.)
+Last updated: 2026-06-16 (**Closed D1** — Field SOW vertical activated end-to-end and smoke-verified on device. PowerSync reconnected after a four-layer infra fix (IPv6→IPv4 add-on → DB password reset → wedged worker → full reprovision); `job_wtcs` sync rule deployed; F2/F3 verified live on the iOS simulator. Artifact: `docs/handoffs/assets/fc_d1_sow_smoke_20260616.png`; full chain in `FC_HANDOFF_v6.md`. **B1** (`upload-photo` redeploy) is now the top open item. Prior: 2026-06-16 amended D1 re: stale credential; 2026-06-14 filed D1; 2026-05-27 initial file with **B1**.)
 
 ## Tier definitions
 
@@ -35,9 +35,7 @@ Last updated: 2026-06-16 (Amended **D1** — reprovision attempt surfaced a stal
 
 ### Cleanup / Ops
 
-| ID  | Tier | Status  | Item                                                        | Source                          | Notes |
-|-----|------|---------|-------------------------------------------------------------|---------------------------------|-------|
-| D1  | T2   | Blocked | Deploy `job_wtcs` PowerSync sync-rule + run F1/F2/F3 SOW smoke | SOW vertical build 2026-06-14   | The sync-rule change (`SELECT * FROM job_wtcs` in `all_data`) + the `job_wtcs` schema.js Table are committed on `feat/sow-vertical` (F1, `5f03b0a`) and saved as a dashboard Draft, but **NOT deployed** — the Development PowerSync instance is **deprovisioned** (stopped 2026-04-25; Field not in production). Chris's call 2026-06-14: keep the instance parked, deploy + smoke ALL Field functions together at Field build-completion/launch. **To deploy:** PowerSync dashboard → Health → **Redeploy** (reprovisions the instance), then Sync Rules → **Deploy** the `job_wtcs` draft (or re-paste the one line from `powersync-sync-rules.yaml`). **Then smoke:** F2 (TasksTab reads canonical `job_wtcs`) + F3 (day-grouped render) on a device; confirm the dated SOW renders. The Sales→Schedule legs of the SOW vertical do NOT depend on this (web apps, no PowerSync) — they ship independently. **Blocked-by:** Field launch readiness. Also re-check B1 (`upload-photo` redeploy) at the same time. **[2026-06-16 update]** Reprovision attempted (Health → Redeploy ran), but the PowerSync→Supabase **source DB connection FAILS on a stale credential**: `password authentication failed for user "postgres"` (instance parked since April; stored DB password no longer valid). So the launch order is now: **(0) fix the postgres password** — PowerSync → Database Connections → Edit, using the current password from Supabase → Project Settings → Database (reset only if lost; web apps use the anon key + RLS, so low blast radius) → **(1) deploy the `job_wtcs` sync-rule draft** → **(2) smoke F2/F3 on a device**. The SOW *travel* logic is already proven offline (job 92's real `job_wtcs` run through F3's `mergeDaysByDate` produced the correct date-grouped crew view, 2026-06-16). Instance is currently reprovisioned-but-erroring — Chris may re-Stop it to restore the no-cost parked state. |
+(none open — D1 closed 2026-06-16, see Completed Log)
 
 ---
 
@@ -52,4 +50,6 @@ Last updated: 2026-06-16 (Amended **D1** — reprovision attempt surfaced a stal
 
 ## Completed Log
 
-(empty)
+| ID  | Tier | Closed     | Item | Resolution |
+|-----|------|------------|------|------------|
+| D1  | T2   | 2026-06-16 | Deploy `job_wtcs` PowerSync sync-rule + run F2/F3 SOW smoke | Activated the Field SOW vertical end-to-end and smoke-verified on the iOS simulator. PowerSync wouldn't connect — cleared through four stacked infra layers: (1) Supabase moved the direct connection to **IPv6-only** while the instance was parked → enabled the **Dedicated IPv4 add-on** (~$4/mo, `52.8.157.147`); (2) the stored `postgres` password was stale (the earlier sheet value was pre-reset) → **reset the DB password** in Supabase and updated PowerSync + the password sheet; (3) network restrictions confirmed open (all IPs); (4) the replication **worker stayed wedged** on a failed route (Test Connection passed + endpoint reachable externally 14/14, but the worker got persistent `ECONNREFUSED`) → **deprovisioned + redeployed the instance** (full reprovision), which got a fresh worker with a working route. Then **deployed the `job_wtcs` sync rule** (it had been an undeployed dashboard Draft). Field Command synced (`● Synced`), opened job #10044, Field SOW tab rendered **F2** (canonical `job_wtcs`: Test Task 1 / TARGET 20%, Vocomp 25, 10,000 SQFT) + **F3** (Day 1–4 day-grouping via `mergeDaysByDate`). Artifact: `docs/handoffs/assets/fc_d1_sow_smoke_20260616.png`. Full chain: `FC_HANDOFF_v6.md`. **Follow-ups:** B1 still open; the F3 *calendar-date* grouping path is unverified (test job #10044 has no assigned dates — banner read "DATES TBD"); `CLAUDE.md` PowerSync section is stale (lists 5 sync tables / "edition 3", deployed rules now sync ~9 incl. `job_wtcs`, `jobs`, `job_crew`, `daily_log_entries`). |
