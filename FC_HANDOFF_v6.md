@@ -1,6 +1,15 @@
 # FC_HANDOFF_v6 — June 16, 2026
-**Repo:** field-command · **Branch:** feat/sow-vertical
+**Repo:** field-command · **Branch:** feat/sow-vertical → **MERGED to main**
 **Session:** Activate + smoke-test the Field SOW vertical (BACKLOG **D1**) — DONE
+
+> **POST-SESSION (end of 2026-06-16):** after D1, the whole SOW vertical was
+> merged to `main` across all three repos (sales-command `9ae8d93`, sch-command
+> `944b79b`, field-command `8472c43`; coordinated `--no-ff`, code-only, migrations
+> already live). **Pending (surfaces in next `/orient`):** (1) verify the Vercel
+> prod deploys of `main` are healthy on `salescommand.app` + `schedulecommand.com`;
+> (2) then delete the `feat/sow-vertical` branches (kept as a rollback cushion).
+> Other follow-ups: backlog FE1/B2/D2, file design-pass enhancements, clean up
+> `ZZ TEST` job 92 from prod, two-tenant PowerSync test before customer #2.
 
 ---
 
