@@ -6,8 +6,7 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web",
-    "db:push": "node scripts/check-migration-collision.mjs && supabase db push"
+    "web": "expo start --web"
   },
   "dependencies": {
     "@azure/core-asynciterator-polyfill": "^1.0.2",
