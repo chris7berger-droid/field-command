@@ -104,15 +104,17 @@ supabase/
 - JSONB fields stored as text in SQLite (field_sow, materials, tasks, photos, etc.)
 - `prevailing_wage` lives on both call_log (denormalized) and proposal_wtc
 
-## Pushing Migrations
+## Database Migrations — moved to `command-suite-db`
 
-Always use `npm run db:push` instead of raw `supabase db push`. The wrapper
-runs a collision check against the prod ledger before pushing — it catches
-timestamp collisions across repos sharing the same Supabase project. If it
-reports a collision, rename your migration file to the next free timestamp.
-If the ledger is unreachable, re-auth with `supabase login` and
-`supabase link --project-ref pbgvgjjuhnpsumnowuym`.
-Canonical convention doc: `~/sales-command/docs/plans/o7_migration_coordination.md`.
+**field-command no longer owns or pushes migrations.** As of 2026-06-29 all Command
+Suite migrations live in the dedicated repo **`command-suite-db`**
+(`github.com/chris7berger-droid/command-suite-db`) — one source of truth matching
+the shared project's one ledger.
+
+To make a database change: author and push it from `command-suite-db`
+(`npm run db:push` there), not here. The collision-check tooling relocated to that
+repo, and this repo is unlinked from the Supabase project. Plan + 4-round audit:
+`~/sales-command/docs/plans/shared_migrations_consolidation.md`.
 
 ## Design System (Command Suite)
 Must match the visual design across Sales Command, Schedule Command, and AR Command.
