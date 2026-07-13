@@ -1,5 +1,10 @@
 # Field Command
 
+> **SOW / Material-Flow pipeline work?** The cross-repo master schedule is the spine:
+> `command-suite-db/docs/MASTER_SCHEDULE.md`. Read it before picking up any Sales→Schedule→Field
+> SOW / material / mobilization work — it says which phase is done and what's next, so terminals on
+> different machines stop surfacing different slices as if they were different projects. (Set 2026-07-13.)
+
 ## What This Is
 Field Command is a crew-facing mobile app for construction subcontractors. It's the field counterpart to Sales Command (scmybiz.com) and Schedule Command (schmybiz.com) in the Command Suite. Crew members use it to clock in/out, view tasks, fill daily production reports, and upload job photos — all offline-first.
 
