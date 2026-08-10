@@ -48,7 +48,7 @@ answer those four. Full contract + open decisions:
 ## PowerSync Cloud
 - **Instance URL:** https://69d81f100e377e689729db98.powersync.journeyapps.com
 - **Dashboard:** dashboard.powersync.com, org chris7berger-droid, project Field Command
-- **Sync Streams (edition 3):** call_log, proposal_wtc, team_members, time_punches, daily_production_reports
+- **Synced tables (9):** call_log, proposal_wtc, job_wtcs, team_members, job_crew, jobs, time_punches, daily_production_reports, daily_log_entries (single `all_data` bucket, no per-user filtering yet). Deployed list lives in `powersync-sync-rules.yaml`.
 - **Client Auth:** Supabase Auth with JWT secret
 - **Single-tenant** — global bucket, no per-user filtering yet
 
@@ -72,7 +72,7 @@ src/
     location.js                 — GPS/location helpers
     photos.js                   — Photo compress + upload pipeline
     powersync.js                — PowerSync database singleton
-    schema.js                   — PowerSync schema (5 tables)
+    schema.js                   — PowerSync schema (9 tables)
     supabase.js                 — Supabase client
     tokens.js                   — Design tokens (colors, fonts, spacing, common styles)
     utils.js                    — Misc utilities
@@ -96,12 +96,18 @@ supabase/
 
 ### Read-only tables (sync down from Supabase):
 - **call_log** — jobs (id is INTEGER, stage values capitalized: 'Sold', 'Has Bid', etc.)
-- **proposal_wtc** — WTC data including field_sow JSONB
+- **proposal_wtc** — WTC data including field_sow JSONB (legacy SOW fallback)
+- **job_wtcs** — canonical dated Field SOW (source for the Field SOW tab; `mergeDaysByDate`)
 - **team_members** — crew roster
+- **job_crew** — per-job crew assignment
+- **jobs** — aliased `SELECT job_id AS id, *` in the sync rules
+- **daily_log_entries** — synced down for display (not written locally)
 
 ### Read-write tables (written locally, synced up):
 - **time_punches** — clock in/out, lunch, drive time (indexed by job_id + punch_date)
 - **daily_production_reports** — end-of-shift submission by job lead (indexed by job_id + report_date)
+
+(Upload path in `connector.js` currently pushes only `time_punches` + `daily_production_reports`.)
 
 ## Database Notes
 - `call_log.id` is INTEGER (not UUID)
