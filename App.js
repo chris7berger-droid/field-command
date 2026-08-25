@@ -5,7 +5,7 @@
  * PowerSync for offline-first data, Supabase for auth.
  */
 import '@azure/core-asynciterator-polyfill';
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -40,6 +40,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
+  const connectedRef = useRef(false);
 
   const [fontsLoaded] = useFonts({
     Barlow_400Regular,
@@ -56,6 +57,18 @@ export default function App() {
     db.init().then(() => setDbReady(true));
   }, []);
 
+  // ── Connect PowerSync once the DB is ready AND we have a session ──
+  // Covers BOTH fresh login and a restored session on cold start. Without
+  // this, a persisted session renders the authenticated UI but never
+  // connects the sync engine, leaving the app permanently "Offline" on
+  // every relaunch (crew devices cold-start with a saved session).
+  useEffect(() => {
+    if (dbReady && session && !connectedRef.current) {
+      connectedRef.current = true;
+      connectPowerSync().catch(console.error);
+    }
+  }, [dbReady, session]);
+
   // ── Check existing session on mount ───────────────────
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
@@ -69,7 +82,10 @@ export default function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
       if (s) loadUser(s.user.email);
-      else setUser(null);
+      else {
+        setUser(null);
+        connectedRef.current = false; // allow reconnect on next login
+      }
     });
 
     return () => subscription?.unsubscribe();
@@ -114,7 +130,8 @@ export default function App() {
     if (newSession?.user?.email) {
       loadUser(newSession.user.email);
     }
-    connectPowerSync().catch(console.error);
+    // PowerSync connect is handled by the dbReady+session effect above,
+    // so both fresh login and restored sessions take the same path.
   }, [loadUser]);
 
   // ── Loading ───────────────────────────────────────────
