@@ -1,67 +1,63 @@
-# Field SOW Screen — Ideate Seed
+# Field SOW Screen — Visual Pass Spec
 
-**Purpose:** Seed for an **ideate** session (opus 4.8, xhigh) on the format of Field Command's **Field SOW tab**. Content/data now flows correctly Sales → Schedule → Field; what's left is the *presentation* — and, importantly, the *data that has to flow to support it*.
+**Scope:** A **Field-only visual/render pass** on the Field SOW tab (`src/screens/tabs/TasksTab.js`). Re-skin the screen to the target mockup layout, in Field Command's real palette, and wire it to read fields **that are already synced into Field**. Nothing else.
 
-**Created:** 2026-08-26, from the session that got Field Command syncing again.
-**Repo/branch this lives on:** `field-command`, branch `fix/powersync-connect-on-restored-session`.
-**Spine to read first:** `command-suite-db/docs/MASTER_SCHEDULE.md` (the cross-app SOW/material-flow schedule).
+> **This supersedes the earlier "data-contract rebuild" framing of this doc, which was wrong.**
+> The instructions and rich material details ARE captured upstream (Sales + Schedule) and DO
+> reach Field — verified in `job_wtcs.field_sow` on 2026-08-26. The Field screen simply isn't
+> rendering them yet. This is a render-layer change, not a rebuild.
 
----
+## OUT OF SCOPE (do NOT do)
+- No changes to Sales Command or Schedule Command.
+- No new database fields, no data-contract work, no migrations.
+- No rebuild of the sync layer or the day-merge logic (`mergeDaysByDate` / `buildMergedDay` stay as-is — just render what they already produce).
+- Don't chase the duplicate-`jobs`-rows bug here (parked separately — see bottom).
 
-## Status: what works now
-End-to-end pipeline is proven. Test job **#10257 "TEST Field SOW flow through and format"** (Washoe Painting, `call_log` id 3855, stage In Progress) syncs to Field with correct content:
-- 4 real dated days (Mon Aug 31 → Thu Sep 3)
-- Task **Patching**, tagged **Urethane Cement**, target 100%
-- 2 crew / 16 hrs, production target 1,200 SQ FT
-
-So the ideate is **not** about fixing data flow. It's about the screen format + the richer data the target format needs.
-
----
-
-## TARGET (the mockup Chris shared — described, since the image won't carry over)
-A single day's SOW card, richer than what's built today:
-
-- **Horizontal day selector** (chevrons ‹ ›): each pill shows weekday + date **and** a DAY label — e.g. `MON / AUG 31 / DAY 1`, `TUE / SEP 1 / DAY 2`, `WED / SEP 2 / DAY 3`, `THU / SEP 3 / DAY 4-5`, `FRI / SEP 4 / DAY 6-7`. Note the **multi-day labels** (DAY 4-5, DAY 6-7) — one calendar day can represent a *range* of plan-days.
+## Target layout (the mockup Chris approved)
+A single day's card:
 - **Day header:** `DAY 1 OF 7` + `MON, AUG 31`, with a `1 TASK` count badge top-right.
-- **Meta row (icons):** `2 CREW · 16 HRS · 1,200 SQ FT · WTC 1` — includes **per-day SQ FT** and a **WTC label**.
-- **TODAY'S WORK** section: numbered tasks (black circle `1`) — `PATCH FLOOR & JOINTS`, `TARGET: 100%`.
-- **INSTRUCTIONS** section: a callout with a left teal accent bar, free-text — e.g. *"Use Terrco and hand grinders to prep the concrete in all 9 rooms and 1 bathroom. Averaging 120 Sqft per room. Use 14/15 and Cabosil to patch in all joints, cracks and holes."*
-- **MATERIALS** section: a **table** — columns MATERIAL / QTY / DETAILS, each row with a **checkbox**. e.g. `☐ 14/15 + Cabosil | 1 kit (3 gallon) | Mix time: 3 min, Mix speed: Medium`.
-- Light/parchment theme, teal accents, Barlow Condensed headers, left teal accent bar on the day card.
+- **Meta row (icons, one line):** `2 CREW · 16 HRS · 1,200 SQ FT · WTC 1`.
+- **TODAY'S WORK:** numbered task rows (circled `1`) — task name (bold) + `TARGET: 100%`.
+- **INSTRUCTIONS:** a callout card with a left teal accent bar, free text.
+- **MATERIALS:** a table — columns MATERIAL / QTY / DETAILS, each row with a check-off box.
+- Keep the existing horizontal **day selector** at top (the merged-day pills). Restyling those to the mockup's pill style is optional polish, not core.
 
-## CURRENT (what Field renders today — `src/screens/tabs/TasksTab.js`)
-- Day pills show **date only** (no DAY N, no multi-day range label).
-- Day header `MON, AUG 31`; badges `2 crew` `16.0 hrs` (dark pills). No `DAY X OF Y`, no task-count badge.
-- `PLANNED TASKS`: one card — task name + work-type tag + `TARGET 100%` + a progress bar.
-- Big `PRODUCTION TARGET — 1,200 SQFT` card.
-- **No** instructions, **no** materials table, **no** numbered tasks, **no** per-day SQ FT / WTC in a meta row.
+## Brand palette — the one real fix vs the mockup
+Use Field's tokens (`src/lib/tokens.js`), NOT the mockup's teal-on-white:
+- Background: linen `#b5a896` (base), `#c8bcaa` (cards); dark blocks `#1c1814`.
+- Accent: teal `#30cfac` — **only on dark backgrounds** (section bullets, accent bar, key numbers).
+- Headings: Barlow Condensed (bold, uppercase, tracked); body: Barlow.
+- No white backgrounds. The pay-app screens are the palette gold standard to match.
 
----
+## Field mapping — every element already exists in `job_wtcs.field_sow`
+Each day object in `field_sow` (what Field syncs) carries:
 
-## The data we actually have (drives the gap analysis)
-Field reads **`job_wtcs.field_sow`** (canonical) joined via `jobs.call_log_id`; legacy fallback is `jobs.field_sow`. `field_sow` is a JSON array of **day objects**. Confirmed fields per day for 10257:
-- `date`, `day_label` ("Day 1"…), `crew_count`, `hours_planned`
-- `tasks[]` — each has `description`, `work_type_name`, and a target % (shown in UI)
-- `materials[]` — present in the shape, but **empty for 10257**; on an older job (10044) materials carried only a name + qty (1), **no** unit/mix-time/mix-speed/details.
+| Mockup element        | Field in `field_sow` day object                          |
+|-----------------------|----------------------------------------------------------|
+| INSTRUCTIONS text     | `scope_notes`                                            |
+| Task name             | `tasks[].description`                                    |
+| TARGET %              | `tasks[].pct_complete`                                   |
+| `N TASK` badge count  | `tasks.length`                                           |
+| Crew                  | `crew_count`                                             |
+| Hrs                   | `hours_planned`                                          |
+| SQ FT (per day)       | `sq_ft`                                                  |
+| WTC N                 | `mobilization_seq`                                       |
+| Day label / DATE      | `day_label`, `date`                                     |
+| MATERIAL name         | `materials[].name`                                      |
+| QTY                   | `materials[].qty_planned` + `materials[].kit_size` (unit, e.g. "3 gallon") |
+| DETAILS               | `materials[].mix_time`, `materials[].mix_speed` (and `cure_time`, `coverage_rate`, `mils` if wanted) |
 
-## GAPS (target needs → data doesn't have yet) — the heart of the ideate
-1. **Instructions text** — mockup has a rich INSTRUCTIONS block; no such field in `field_sow` today. Where authored (Sales SOW builder?), where stored, how it flows.
-2. **Rich materials** — mockup wants qty **+ unit** ("3 gallon"), **mix time**, **mix speed**, **details**, plus a crew check-off. Current material rows are name + qty only.
-3. **Multi-day grouping / ranges** — mockup's `DAY 4-5`, `DAY 6-7`, and `DAY 1 OF 7`. Field has `mergeDaysByDate`/`buildMergedDay` (calendar-date merge), but the *range* labeling and "of N" total is different — reconcile.
-4. **Per-day SQ FT + WTC label** in the meta row.
-5. **Task-count badge** (`1 TASK`) and **numbered task list**.
-6. Materials **check-off** state — is it per-crew, per-device, synced up, or display-only? (Touches the sync-up path in `connector.js`.)
+## Empty-state rule
+Render each section **only when its data is present**. Some days legitimately have no materials (`materials: []`) or no `scope_notes` — hide that section rather than showing an empty shell. (Example: 10257 Day 1 has `scope_notes` but an empty `materials` array.)
 
-## Cross-app implication (don't scope this as Field-only)
-Instructions + rich materials must be **captured in Sales Command's SOW builder** and **flow through** `job_wtcs.field_sow` (or a new structure) to Field. This is a **data-contract** question, not just a Field layout question. Per the shared-data contract, each new field needs: source-of-truth (one writer), canonical location, copy-vs-reference, sync pipe (PowerSync). Contract doc: `sch-command/docs/plans/command_suite_shared_data_contract.md`.
-
-## Parked bug (carry into the plan, not the ideate)
-Sending #10257 to Schedule created **3 duplicate `jobs` rows** (job_id 96, 97, 98) for one `call_log`; only 96 got the canonical `job_wtcs` row. Identical `field_sow` on all three, so no visible drift *today*, but Field's `SELECT id FROM jobs WHERE call_log_id = ?` returns 3 rows and picks one arbitrarily — fragile. Root cause is in the Sales→Schedule handoff (likely sch-command — confirm owner).
+## Verify against
+Test job **#10257** (`job_wtcs.job_id` 96) has real `scope_notes`, `sq_ft` 1200, `mobilization_seq` 1, and tasks with `pct_complete`. Jobs 92 / 95 have populated `materials[]` (name, kit_size, qty_planned, cure_time) to test the materials table. Build in the browser/sim and eyeball against the mockup + Field palette.
 
 ## Pointers
-- Field render: `src/screens/tabs/TasksTab.js` (see the header comment — `mergeDaysByDate`, `buildMergedDay`)
-- Local schema: `src/lib/schema.js`; sync rules: `powersync-sync-rules.yaml`
-- Full session writeup: `FC_HANDOFF_v8.md` (backend was dead → redeployed; PowerSync free tier tears down when idle → paid tier before real crew use)
+- Render target: `src/screens/tabs/TasksTab.js` (day-merge logic + current render live here)
+- Palette/tokens: `src/lib/tokens.js`
+- Session context: `FC_HANDOFF_v8.md`
 
-## Suggested ideate framing
-Start from the *data contract*, not the pixels: for each new element in the target (instructions, rich materials, ranges, per-day sqft/WTC), decide **what gets authored where** and **how it reaches Field**, then let the Field layout fall out of what's actually available. Keep it planning-only — no code/branches this pass.
+## Parked (not this task)
+- Duplicate `jobs` rows (96/97/98) for one `call_log` from the Sales→Schedule handoff — Field's `SELECT id FROM jobs WHERE call_log_id = ?` picks one arbitrarily. Owner likely sch-command.
+- PowerSync paid tier before real crew use (free instance tears down when idle).
