@@ -6,6 +6,16 @@
 
 ---
 
+## UPDATE — 2026-08-26 (resolved; supersedes "Next steps" below)
+
+- **App now syncs.** Backend survived overnight; a clean reinstall + fresh login connected it — top bar shows **"Synced,"** and the connect-on-restored-session fix works.
+- **Content verified correct.** Job **#10257** renders the right SOW end-to-end: dated days Aug 31–Sep 3, task **Patching** tagged **Urethane Cement**, 2 crew / 16 hrs, 1,200 SQ FT. Sales → Schedule → Field data flow is proven.
+- **Only open item: formatting.** Chris has a richer target mockup (instructions block, materials table, day ranges, per-day sqft/WTC). That's now an **ideate** session, seeded at **`docs/plans/field_sow_format_ideate_seed.md`** — start there in a fresh terminal.
+- **Still parked:** duplicate `jobs` rows (96/97/98) from the Sales→Schedule handoff; PowerSync paid-tier decision before real crew use.
+- The original "Next steps" section below is now **done** — kept for history.
+
+---
+
 ## Where this stands right now
 
 - **Backend is fixed.** The whole sync engine (PowerSync) was dead and is now rebuilt and healthy.
