@@ -16,10 +16,18 @@ import React, { useState, useMemo } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
 } from 'react-native';
-import { useQuery } from '@powersync/react';
+import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
 import { parseJSON, fmtPct, fmtDayLabel } from '../../lib/utils';
 import LinenBackground from '../../components/LinenBackground';
+
+// Local uuid (PowerSync row ids are client-generated v4 uuids).
+function generateId() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
 
 // Merge per-WTC day arrays into calendar-date groups (F3 spec).
 //   taggedDays: day objects each carrying a `work_type_name` (its source WTC).
@@ -96,7 +104,9 @@ function buildMergedDay(group, meta) {
   };
 }
 
-export default function TasksTab({ jobId }) {
+export default function TasksTab({ jobId, employeeId, employeeName }) {
+  const db = usePowerSync();
+
   // Primary: canonical dated SOW from job_wtcs. job_wtcs.job_id (int8) equals the
   // Field-local jobs.id (jobs syncs `job_id AS id`), so resolve it via call_log_id.
   const { data: wtcRows, isLoading: wtcLoading } = useQuery(
@@ -109,6 +119,13 @@ export default function TasksTab({ jobId }) {
   // Legacy fallback: jobs.field_sow mirror for pre-vertical jobs with no job_wtcs.
   const { data: jobRows, isLoading: jobsLoading } = useQuery(
     `SELECT field_sow, size, size_unit FROM jobs WHERE call_log_id = ? LIMIT 1`,
+    [jobId]
+  );
+
+  // Persistent per-material load-out confirmations. One row per material,
+  // toggled via `checked`; keyed by the material's stable wtc_material_id.
+  const { data: checkRows } = useQuery(
+    `SELECT id, wtc_material_id, checked FROM job_material_checks WHERE job_id = ?`,
     [jobId]
   );
 
@@ -135,16 +152,44 @@ export default function TasksTab({ jobId }) {
   }, [wtcRows, jobRow]);
 
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
-  // Check-off is a field convenience only — ephemeral UI state, not persisted
-  // (this is a visual pass; no writes / data-contract work per the seed).
-  const [checkedMats, setCheckedMats] = useState(() => new Set());
+  // Which material rows are expanded to show full specs (view state only).
+  const [expandedMats, setExpandedMats] = useState(() => new Set());
   const currentDay = days[selectedDayIdx] || null;
 
-  const toggleMat = (matKey) => setCheckedMats((prev) => {
+  // wtc_material_id → persisted check row ({ id, checked }).
+  const checkByMat = useMemo(() => {
+    const m = new Map();
+    for (const r of (checkRows || [])) m.set(r.wtc_material_id, r);
+    return m;
+  }, [checkRows]);
+
+  const toggleExpand = (matKey) => setExpandedMats((prev) => {
     const next = new Set(prev);
     next.has(matKey) ? next.delete(matKey) : next.add(matKey);
     return next;
   });
+
+  // Persist a load-out confirmation. Upsert-by-material: flip the existing row's
+  // `checked`, or insert one. Writes to the local PowerSync DB; connector syncs up.
+  const toggleCheck = async (mat, checkDate) => {
+    const matId = mat.wtc_material_id;
+    if (!matId) return; // no stable id → cannot persist safely
+    const existing = checkByMat.get(matId);
+    const now = new Date().toISOString();
+    if (existing) {
+      await db.execute(
+        `UPDATE job_material_checks SET checked=?, checked_by=?, checked_by_name=?, updated_at=? WHERE id=?`,
+        [existing.checked ? 0 : 1, employeeId || null, employeeName || null, now, existing.id]
+      );
+    } else {
+      await db.execute(
+        `INSERT INTO job_material_checks
+           (id, job_id, wtc_material_id, check_date, material_name, checked, checked_by, checked_by_name, created_at, updated_at)
+         VALUES (?,?,?,?,?,1,?,?,?,?)`,
+        [generateId(), jobId, matId, checkDate || null, mat.name || null, employeeId || null, employeeName || null, now, now]
+      );
+    }
+  };
 
   if (isLoading) {
     return <View style={styles.center}><Text style={styles.loadingText}>Loading tasks...</Text></View>;
@@ -220,7 +265,6 @@ export default function TasksTab({ jobId }) {
                   <Text style={styles.taskDesc} numberOfLines={2}>{task.description || 'Untitled task'}</Text>
                   <View style={styles.pctBadge}><Text style={styles.pctLabel}>TARGET </Text><Text style={styles.pctText}>{fmtPct(task.pct_complete)}</Text></View>
                 </View>
-                {task.work_type_name ? <Text style={styles.wtTag}>{task.work_type_name}</Text> : null}
                 <View style={styles.progressTrack}>
                   <View style={[styles.progressFill, { width: `${Math.min(task.pct_complete || 0, 100)}%` }]} />
                 </View>
@@ -240,36 +284,64 @@ export default function TasksTab({ jobId }) {
           {(currentDay.materials || []).length > 0 && (
             <>
               <Text style={[styles.sectionTitle, { marginTop: S.lg }]}>MATERIALS</Text>
+              <Text style={styles.matInstruction}>Check off each material loaded in your truck today.</Text>
               <View style={styles.matTable}>
                 <View style={styles.matHeadRow}>
-                  <Text style={[styles.matHeadCell, styles.matColName]}>MATERIAL</Text>
+                  <Text style={[styles.matHeadCell, { flex: 1 }]}>MATERIAL</Text>
                   <Text style={[styles.matHeadCell, styles.matColQty]}>QTY</Text>
-                  <Text style={[styles.matHeadCell, styles.matColDetails]}>DETAILS</Text>
+                  <Text style={[styles.matHeadCell, styles.matChevCol]}> </Text>
                 </View>
                 {currentDay.materials.map((mat, idx) => {
                   const matKey = `${currentDay.key}:${mat.wtc_material_id || idx}`;
-                  const checked = checkedMats.has(matKey);
+                  const checkRow = mat.wtc_material_id ? checkByMat.get(mat.wtc_material_id) : null;
+                  const checked = !!(checkRow && checkRow.checked);
+                  const expanded = expandedMats.has(matKey);
                   const qty = Number(mat.qty_planned) || 0;
-                  const details = [];
-                  if (Number(mat.mix_time) > 0) details.push(`Mix ${mat.mix_time} min`);
-                  if (mat.mix_speed) details.push(String(mat.mix_speed));
-                  if (mat.cure_time) details.push(`Cure ${mat.cure_time}`);
+                  // Full spec set — string values shown verbatim (mix_time etc. carry
+                  // their own units, e.g. "5 min"). Only fields that are present show.
+                  const specs = [
+                    ['Kit size', mat.kit_size],
+                    ['Mix time', mat.mix_time],
+                    ['Mix speed', mat.mix_speed],
+                    ['Cure time', mat.cure_time],
+                    ['Coverage', mat.coverage_rate],
+                    ['Mils', mat.mils],
+                  ].filter(([, v]) => v != null && String(v).trim() !== '');
                   return (
-                    <TouchableOpacity key={matKey} style={styles.matRow} onPress={() => toggleMat(matKey)} activeOpacity={0.7}>
-                      <View style={styles.matColName}>
-                        <View style={styles.matNameWrap}>
-                          <View style={[styles.checkbox, checked && styles.checkboxOn]}>
-                            {checked ? <Text style={styles.checkMark}>✓</Text> : null}
-                          </View>
+                    <View key={matKey} style={styles.matItem}>
+                      <View style={styles.matRow}>
+                        <TouchableOpacity
+                          style={[styles.checkbox, checked && styles.checkboxOn]}
+                          onPress={() => toggleCheck(mat, currentDay.date)}
+                          hitSlop={{ top: 12, bottom: 12, left: 12, right: 6 }}
+                          activeOpacity={0.7}
+                        >
+                          {checked ? <Text style={styles.checkMark}>✓</Text> : null}
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.matRowBody}
+                          onPress={() => specs.length && toggleExpand(matKey)}
+                          activeOpacity={specs.length ? 0.7 : 1}
+                        >
                           <Text style={[styles.matName, checked && styles.matNameChecked]} numberOfLines={2}>{mat.name || 'Unknown material'}</Text>
+                          <View style={styles.matColQty}>
+                            <Text style={styles.matQtyNum}>{qty > 0 ? qty : '—'}</Text>
+                            {mat.kit_size ? <Text style={styles.matQtyUnit}>{mat.kit_size}</Text> : null}
+                          </View>
+                          <Text style={styles.chevron}>{specs.length ? (expanded ? '▾' : '▸') : ''}</Text>
+                        </TouchableOpacity>
+                      </View>
+                      {expanded && specs.length > 0 && (
+                        <View style={styles.specBlock}>
+                          {specs.map(([label, value]) => (
+                            <View key={label} style={styles.specRow}>
+                              <Text style={styles.specLabel}>{label}</Text>
+                              <Text style={styles.specValue}>{String(value)}</Text>
+                            </View>
+                          ))}
                         </View>
-                      </View>
-                      <View style={styles.matColQty}>
-                        <Text style={styles.matQtyNum}>{qty > 0 ? qty : '—'}</Text>
-                        {mat.kit_size ? <Text style={styles.matQtyUnit}>{mat.kit_size}</Text> : null}
-                      </View>
-                      <Text style={[styles.matColDetails, styles.matDetailsText]}>{details.length ? details.join('\n') : '—'}</Text>
-                    </TouchableOpacity>
+                      )}
+                    </View>
                   );
                 })}
               </View>
@@ -330,22 +402,27 @@ const styles = StyleSheet.create({
   progressFill: { height: '100%', backgroundColor: C.teal, borderRadius: 3 },
   instructionsCard: { backgroundColor: C.linenCard, borderRadius: 10, padding: S.md, borderWidth: 1, borderColor: C.borderStrong, borderLeftWidth: 4, borderLeftColor: C.teal },
   instructionsText: { fontFamily: F.body, fontSize: 14, color: C.textBody, lineHeight: 21 },
+  matInstruction: { fontFamily: F.body, fontSize: 13, color: C.textLight, fontStyle: 'italic', marginTop: -2, marginBottom: S.sm },
   matTable: { backgroundColor: C.linenCard, borderRadius: 10, borderWidth: 1, borderColor: C.borderStrong, overflow: 'hidden' },
   matHeadRow: { flexDirection: 'row', backgroundColor: C.dark, paddingVertical: 8, paddingHorizontal: S.md },
   matHeadCell: { fontFamily: F.display, fontSize: 11, color: C.textFaint, letterSpacing: 1.5 },
-  matRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 10, paddingHorizontal: S.md, borderTopWidth: 1, borderTopColor: C.border },
-  matColName: { flex: 2.2, paddingRight: S.sm },
-  matColQty: { flex: 1, paddingRight: S.sm },
-  matColDetails: { flex: 1.6 },
-  matNameWrap: { flexDirection: 'row', alignItems: 'flex-start' },
-  checkbox: { width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: C.textFaint, marginRight: S.sm, marginTop: 1, alignItems: 'center', justifyContent: 'center' },
+  matChevCol: { width: 24, textAlign: 'center' },
+  matItem: { borderTopWidth: 1, borderTopColor: C.border },
+  matRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: S.md },
+  matRowBody: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  matColQty: { width: 72, paddingRight: S.sm },
+  checkbox: { width: 20, height: 20, borderRadius: 4, borderWidth: 1.5, borderColor: C.textFaint, marginRight: S.sm, alignItems: 'center', justifyContent: 'center' },
   checkboxOn: { backgroundColor: C.dark, borderColor: C.teal },
-  checkMark: { fontFamily: F.bodyBold, fontSize: 12, color: C.teal, lineHeight: 15 },
-  matName: { fontFamily: F.bodyMed, fontSize: 14, color: C.textBody, flex: 1 },
+  checkMark: { fontFamily: F.bodyBold, fontSize: 13, color: C.teal, lineHeight: 16 },
+  matName: { fontFamily: F.bodyMed, fontSize: 14, color: C.textBody, flex: 1, paddingRight: S.sm },
   matNameChecked: { color: C.textFaint, textDecorationLine: 'line-through' },
   matQtyNum: { fontFamily: F.display, fontSize: 16, color: C.textHead },
   matQtyUnit: { fontFamily: F.body, fontSize: 11, color: C.textLight, marginTop: -1 },
-  matDetailsText: { fontFamily: F.body, fontSize: 12, color: C.textLight, lineHeight: 17 },
+  chevron: { width: 24, textAlign: 'center', fontFamily: F.body, fontSize: 14, color: C.textMuted },
+  specBlock: { paddingHorizontal: S.md, paddingTop: 2, paddingBottom: 10, backgroundColor: C.linenDeep },
+  specRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', paddingVertical: 3 },
+  specLabel: { fontFamily: F.display, fontSize: 11, color: C.textMuted, letterSpacing: 1 },
+  specValue: { fontFamily: F.body, fontSize: 13, color: C.textBody, flexShrink: 1, textAlign: 'right', marginLeft: S.md },
   targetCard: { backgroundColor: C.dark, borderRadius: 10, padding: S.md, marginTop: S.lg, alignItems: 'center' },
   targetLabel: { fontFamily: F.display, fontSize: 12, color: C.textFaint, letterSpacing: 2, marginBottom: 4 },
   targetValue: { fontFamily: F.display, fontSize: 28, color: C.teal, letterSpacing: 1 },

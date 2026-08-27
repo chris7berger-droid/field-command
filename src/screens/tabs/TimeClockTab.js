@@ -99,6 +99,13 @@ export default function TimeClockTab({ jobId, jobName, employeeId }) {
     [jobId, tod()]
   );
 
+  // PRT gate: today's production report must be submitted before clocking out.
+  const { data: prtRows } = useQuery(
+    'SELECT status FROM daily_production_reports WHERE job_id = ? AND report_date = ? LIMIT 1',
+    [jobId, tod()]
+  );
+  const prtSubmitted = ['submitted', 'approved'].includes(prtRows?.[0]?.status);
+
   useEffect(() => {
     if (!todayPunches || todayPunches.length === 0) return;
     setPunchHistory(todayPunches);
@@ -220,6 +227,10 @@ export default function TimeClockTab({ jobId, jobName, employeeId }) {
       return;
     }
     if (currentStep.punch === 'clock_out') {
+      if (!prtSubmitted) {
+        Alert.alert('Submit your PRT first', "Fill out and submit today's production report before clocking out.");
+        return;
+      }
       setShowClockOutModal(true);
       return;
     }
@@ -229,7 +240,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId }) {
     if (currentStep.punch === 'lunch_start') setLunchStart(new Date());
     Vibration.vibrate(100);
     advanceStep();
-  }, [currentStep, checkGPS, writePunch, advanceStep]);
+  }, [currentStep, checkGPS, writePunch, advanceStep, prtSubmitted]);
 
   // ── Confirm clock out ─────────────────────────────────
   const confirmClockOut = useCallback(async () => {

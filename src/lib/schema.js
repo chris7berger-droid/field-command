@@ -275,6 +275,24 @@ const daily_log_entries = new Table(
   { indexes: { by_job_date: ['job_id', 'created_at'] } }
 );
 
+// job_material_checks — crew "material loaded in truck" confirmations.
+// Written locally by the crew, synced up. tenant_id is filled by the DB default
+// (get_user_tenant_id()) on insert — omitted here like the other writable tables.
+const job_material_checks = new Table(
+  {
+    job_id:             column.integer, // call_log.id
+    wtc_material_id:    column.text,    // stable material id from job_wtcs.field_sow
+    check_date:         column.text,    // the SOW day this material belongs to
+    material_name:      column.text,    // denormalized for office display
+    checked:            column.integer, // boolean
+    checked_by:         column.text,    // team_members.id
+    checked_by_name:    column.text,    // denormalized crew name
+    created_at:         column.text,
+    updated_at:         column.text,
+  },
+  { indexes: { by_job: ['job_id'], by_material: ['wtc_material_id'] } }
+);
+
 // ── Export Schema ──────────────────────────────────────────────────
 
 export const AppSchema = new Schema({
@@ -287,4 +305,5 @@ export const AppSchema = new Schema({
   time_punches,
   daily_production_reports,
   daily_log_entries,
+  job_material_checks,
 });

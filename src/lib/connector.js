@@ -2,7 +2,9 @@
  * PowerSync ↔ Supabase Connector
  *
  * - fetchCredentials: provides PowerSync with the Supabase JWT
- * - uploadData: pushes local writes (time_punches, daily_production_reports) to Supabase
+ * - uploadData: pushes local writes (time_punches, daily_production_reports,
+ *   daily_log_entries, job_material_checks) to Supabase. Table-generic: any
+ *   writable table in the PowerSync schema syncs up here automatically.
  */
 import { UpdateType } from '@powersync/react-native';
 import { supabase } from './supabase';
@@ -16,6 +18,26 @@ const FATAL_CODES = [
   /^23...$/, // Integrity Constraint Violation
   /^42501$/, // Insufficient Privilege (RLS)
 ];
+
+// JSONB columns whose values the app stores as JSON *strings* in local SQLite.
+// They must be sent to PostgREST as parsed JSON, or a JSONB column stores the
+// string itself (jsonb_typeof = 'string') and reads come back double-encoded.
+const JSON_COLUMNS = {
+  daily_production_reports: ['tasks', 'materials_used', 'photos'],
+  daily_log_entries: ['photos'],
+};
+
+function coerceJsonColumns(tableName, data) {
+  const cols = JSON_COLUMNS[tableName];
+  if (!cols || !data) return data;
+  const out = { ...data };
+  for (const c of cols) {
+    if (typeof out[c] === 'string') {
+      try { out[c] = JSON.parse(out[c]); } catch { /* leave as-is if not JSON */ }
+    }
+  }
+  return out;
+}
 
 export class SupabaseConnector {
   constructor() {
@@ -56,10 +78,10 @@ export class SupabaseConnector {
 
         switch (op.op) {
           case UpdateType.PUT:
-            result = await table.upsert({ ...op.opData, id: op.id });
+            result = await table.upsert({ ...coerceJsonColumns(op.table, op.opData), id: op.id });
             break;
           case UpdateType.PATCH:
-            result = await table.update(op.opData).eq('id', op.id);
+            result = await table.update(coerceJsonColumns(op.table, op.opData)).eq('id', op.id);
             break;
           case UpdateType.DELETE:
             result = await table.delete().eq('id', op.id);

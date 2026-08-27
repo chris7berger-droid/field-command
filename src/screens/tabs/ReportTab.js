@@ -11,12 +11,12 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   View, Text, ScrollView, TextInput, TouchableOpacity, Image,
-  Alert, StyleSheet, Vibration,
+  Alert, StyleSheet, Vibration, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
-import { parseJSON, fmtPct, tod } from '../../lib/utils';
+import { parseJSON, parseJSONArray, fmtPct, tod } from '../../lib/utils';
 import { uploadPhotos } from '../../lib/photos';
 import LinenBackground from '../../components/LinenBackground';
 
@@ -70,10 +70,11 @@ export default function ReportTab({ jobId, employeeId }) {
 
   const [taskEntries, setTaskEntries] = useState([]);
   const [prtSubmitting, setPrtSubmitting] = useState(false);
+  const [editing, setEditing] = useState(false); // re-open a submitted PRT to edit + resubmit
 
   useEffect(() => {
     if (existingReport && existingReport.status === 'draft') {
-      setTaskEntries(parseJSON(existingReport.tasks, []));
+      setTaskEntries(parseJSONArray(existingReport.tasks, []));
     } else if (!existingReport && sowTasks.length > 0 && taskEntries.length === 0) {
       setTaskEntries(sowTasks.map((t) => ({ description: t.description, target_pct: t.target_pct, pct_today: 0, notes: '' })));
     }
@@ -82,6 +83,24 @@ export default function ReportTab({ jobId, employeeId }) {
   const updateTask = useCallback((idx, field, value) => {
     setTaskEntries((prev) => { const u = [...prev]; u[idx] = { ...u[idx], [field]: value }; return u; });
   }, []);
+
+  // Re-open a submitted PRT for editing: show the full (flat) task list with the
+  // previously reported values prefilled, so they can correct today's numbers or
+  // add ahead-of-schedule work before resubmitting.
+  const startEdit = useCallback(() => {
+    const submitted = parseJSONArray(existingReport?.tasks, []);
+    const byDesc = new Map(submitted.map((t) => [t.description, t]));
+    setTaskEntries(sowTasks.map((t) => {
+      const prev = byDesc.get(t.description);
+      return {
+        description: t.description,
+        target_pct: t.target_pct,
+        pct_today: prev ? prev.pct_today : 0,
+        notes: prev ? (prev.notes || '') : '',
+      };
+    }));
+    setEditing(true);
+  }, [existingReport, sowTasks]);
 
   // ── Daily Log State ─────────────────────────────────────
   const { data: logEntries, isLoading: logLoading } = useQuery(
@@ -115,13 +134,25 @@ export default function ReportTab({ jobId, employeeId }) {
 
   // ── PRT Submit ──────────────────────────────────────────
   const submitPRT = useCallback(async () => {
-    const missing = taskEntries.find(t => !t.notes || !t.notes.trim());
-    if (missing) { Alert.alert('Notes required', 'Every task needs a note before submitting.'); return; }
+    // Only tasks worked today (a % entered) need a note — a task left at 0 wasn't
+    // touched today, so don't force a note on it.
+    const worked = taskEntries.filter(t => Number(t.pct_today) > 0);
+    if (worked.length === 0) {
+      Alert.alert('Nothing to report yet', 'Enter today’s % for at least one task before submitting.');
+      return;
+    }
+    const missing = worked.find(t => !t.notes || !t.notes.trim());
+    if (missing) {
+      Alert.alert('Note needed', `Add a note for “${missing.description || 'this task'}” before submitting.`);
+      return;
+    }
 
     setPrtSubmitting(true);
     try {
+      // Save only the tasks actually worked today — not every seeded SOW task —
+      // so the submitted report reflects real production, not a wall of 0%s.
       const data = {
-        tasks: JSON.stringify(taskEntries),
+        tasks: JSON.stringify(worked),
         materials_used: '[]',
         hours_regular: 0, hours_ot: 0,
         photos: '[]',
@@ -142,6 +173,9 @@ export default function ReportTab({ jobId, employeeId }) {
         );
       }
       Vibration.vibrate([100, 50, 100]);
+      setEditing(false);
+    } catch (e) {
+      Alert.alert('Not sent', `Could not save the PRT: ${e?.message || 'unknown error'}. Try again.`);
     } finally {
       setPrtSubmitting(false);
     }
@@ -227,6 +261,7 @@ export default function ReportTab({ jobId, employeeId }) {
   // ── Render ──────────────────────────────────────────────
   return (
     <LinenBackground>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
 
         {/* Section Toggle */}
@@ -245,11 +280,12 @@ export default function ReportTab({ jobId, employeeId }) {
             <Text style={styles.sectionTitle}>PRODUCTION RATE TRACKER</Text>
             <Text style={styles.sectionHint}>Enter your daily % for each task. Hit the target or beat it.</Text>
 
-            {prtSubmitted ? (
+            {prtSubmitted && !editing ? (
               <View style={styles.submittedCard}>
+                <View style={styles.sentBadge}><Text style={styles.sentBadgeText}>✓ SENT TO OFFICE</Text></View>
                 <Text style={styles.submittedTitle}>PRT SUBMITTED</Text>
-                <Text style={styles.submittedBody}>Today's production rates have been recorded.</Text>
-                {parseJSON(existingReport?.tasks, []).map((t, idx) => (
+                <Text style={styles.submittedBody}>Today's production has been sent to the office.</Text>
+                {parseJSONArray(existingReport?.tasks, []).filter((t) => Number(t.pct_today) > 0).map((t, idx) => (
                   <View key={idx} style={styles.submittedTask}>
                     <Text style={styles.submittedTaskName}>{t.description}</Text>
                     <View style={styles.submittedPctRow}>
@@ -265,6 +301,9 @@ export default function ReportTab({ jobId, employeeId }) {
                     {t.notes ? <Text style={styles.submittedNotes}>{t.notes}</Text> : null}
                   </View>
                 ))}
+                <TouchableOpacity style={styles.editBtn} onPress={startEdit}>
+                  <Text style={styles.editBtnText}>EDIT &amp; RESUBMIT</Text>
+                </TouchableOpacity>
               </View>
             ) : (
               <>
@@ -320,14 +359,6 @@ export default function ReportTab({ jobId, employeeId }) {
                   );
                 })}
 
-                <View style={styles.actionRow}>
-                  <TouchableOpacity style={styles.draftBtn} onPress={savePRTDraft}>
-                    <Text style={styles.draftBtnText}>SAVE DRAFT</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[styles.submitBtn, prtSubmitting && { opacity: 0.5 }]} onPress={submitPRT} disabled={prtSubmitting}>
-                    <Text style={styles.submitBtnText}>{prtSubmitting ? 'SUBMITTING...' : 'SUBMIT PRT'}</Text>
-                  </TouchableOpacity>
-                </View>
               </>
             )}
           </>
@@ -417,16 +448,6 @@ export default function ReportTab({ jobId, employeeId }) {
                   multiline
                   textAlignVertical="top"
                 />
-
-                <TouchableOpacity
-                  style={[styles.submitBtn, logSubmitting && { opacity: 0.5 }]}
-                  onPress={submitLogEntry}
-                  disabled={logSubmitting}
-                >
-                  <Text style={styles.submitBtnText}>
-                    {logSubmitting ? 'SAVING...' : `SUBMIT ${logType}`}
-                  </Text>
-                </TouchableOpacity>
               </View>
             ) : (
               <View style={styles.logButtons}>
@@ -446,6 +467,28 @@ export default function ReportTab({ jobId, employeeId }) {
         )}
 
       </ScrollView>
+
+      {/* Sticky action bar — always visible so the crew can save from anywhere
+          in the form, not only after scrolling to the bottom. */}
+      {section === 'prt' && (!prtSubmitted || editing) && taskEntries.length > 0 && (
+        <View style={styles.stickyBar}>
+          <TouchableOpacity style={styles.draftBtn} onPress={savePRTDraft}>
+            <Text style={styles.draftBtnText}>SAVE DRAFT</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.submitBtn, prtSubmitting && { opacity: 0.5 }]} onPress={submitPRT} disabled={prtSubmitting}>
+            <Text style={styles.submitBtnText}>{prtSubmitting ? 'SUBMITTING...' : 'SUBMIT PRT'}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {section === 'log' && logType && (
+        <View style={styles.stickyBar}>
+          <TouchableOpacity style={[styles.submitBtn, logSubmitting && { opacity: 0.5 }]} onPress={submitLogEntry} disabled={logSubmitting}>
+            <Text style={styles.submitBtnText}>{logSubmitting ? 'SAVING...' : `SUBMIT ${logType}`}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      </KeyboardAvoidingView>
     </LinenBackground>
   );
 }
@@ -492,6 +535,11 @@ const styles = StyleSheet.create({
   taskNoteInput: { backgroundColor: C.linenDeep, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontFamily: F.body, fontSize: 14, color: C.textBody, minHeight: 44 },
 
   actionRow: { flexDirection: 'row', gap: S.sm, marginTop: S.sm },
+  stickyBar: { flexDirection: 'row', gap: S.sm, paddingHorizontal: S.md, paddingTop: S.sm, paddingBottom: S.md, backgroundColor: C.linenCard, borderTopWidth: 1, borderTopColor: C.borderStrong },
+  editBtn: { marginTop: S.md, backgroundColor: C.dark, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
+  editBtnText: { fontFamily: F.display, fontSize: 14, color: C.teal, letterSpacing: 1 },
+  sentBadge: { alignSelf: 'center', backgroundColor: C.dark, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6, marginBottom: S.sm },
+  sentBadgeText: { fontFamily: F.display, fontSize: 12, color: C.teal, letterSpacing: 1.5 },
   draftBtn: { flex: 1, backgroundColor: C.linenDeep, borderRadius: 10, paddingVertical: 16, alignItems: 'center' },
   draftBtnText: { fontFamily: F.display, fontSize: 14, color: C.textBody, letterSpacing: 1 },
   submitBtn: { flex: 2, backgroundColor: C.dark, borderRadius: 10, paddingVertical: 16, alignItems: 'center' },
