@@ -11,7 +11,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   View, Text, ScrollView, TextInput, TouchableOpacity, Image,
-  Alert, StyleSheet, Vibration,
+  Alert, StyleSheet, Vibration, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { usePowerSync, useQuery } from '@powersync/react';
@@ -227,6 +227,7 @@ export default function ReportTab({ jobId, employeeId }) {
   // ── Render ──────────────────────────────────────────────
   return (
     <LinenBackground>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
 
         {/* Section Toggle */}
@@ -320,14 +321,6 @@ export default function ReportTab({ jobId, employeeId }) {
                   );
                 })}
 
-                <View style={styles.actionRow}>
-                  <TouchableOpacity style={styles.draftBtn} onPress={savePRTDraft}>
-                    <Text style={styles.draftBtnText}>SAVE DRAFT</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[styles.submitBtn, prtSubmitting && { opacity: 0.5 }]} onPress={submitPRT} disabled={prtSubmitting}>
-                    <Text style={styles.submitBtnText}>{prtSubmitting ? 'SUBMITTING...' : 'SUBMIT PRT'}</Text>
-                  </TouchableOpacity>
-                </View>
               </>
             )}
           </>
@@ -446,6 +439,20 @@ export default function ReportTab({ jobId, employeeId }) {
         )}
 
       </ScrollView>
+
+      {/* Sticky action bar — always visible so the crew can save from anywhere
+          in the form, not only after scrolling to the bottom. */}
+      {section === 'prt' && !prtSubmitted && taskEntries.length > 0 && (
+        <View style={styles.stickyBar}>
+          <TouchableOpacity style={styles.draftBtn} onPress={savePRTDraft}>
+            <Text style={styles.draftBtnText}>SAVE DRAFT</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.submitBtn, prtSubmitting && { opacity: 0.5 }]} onPress={submitPRT} disabled={prtSubmitting}>
+            <Text style={styles.submitBtnText}>{prtSubmitting ? 'SUBMITTING...' : 'SUBMIT PRT'}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      </KeyboardAvoidingView>
     </LinenBackground>
   );
 }
@@ -492,6 +499,7 @@ const styles = StyleSheet.create({
   taskNoteInput: { backgroundColor: C.linenDeep, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontFamily: F.body, fontSize: 14, color: C.textBody, minHeight: 44 },
 
   actionRow: { flexDirection: 'row', gap: S.sm, marginTop: S.sm },
+  stickyBar: { flexDirection: 'row', gap: S.sm, paddingHorizontal: S.md, paddingTop: S.sm, paddingBottom: S.md, backgroundColor: C.linenCard, borderTopWidth: 1, borderTopColor: C.borderStrong },
   draftBtn: { flex: 1, backgroundColor: C.linenDeep, borderRadius: 10, paddingVertical: 16, alignItems: 'center' },
   draftBtnText: { fontFamily: F.display, fontSize: 14, color: C.textBody, letterSpacing: 1 },
   submitBtn: { flex: 2, backgroundColor: C.dark, borderRadius: 10, paddingVertical: 16, alignItems: 'center' },
