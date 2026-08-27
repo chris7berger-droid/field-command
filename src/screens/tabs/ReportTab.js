@@ -174,7 +174,6 @@ export default function ReportTab({ jobId, employeeId }) {
       }
       Vibration.vibrate([100, 50, 100]);
       setEditing(false);
-      Alert.alert('PRT sent', `${worked.length} task${worked.length !== 1 ? 's' : ''} submitted to the office.`);
     } catch (e) {
       Alert.alert('Not sent', `Could not save the PRT: ${e?.message || 'unknown error'}. Try again.`);
     } finally {
@@ -283,8 +282,9 @@ export default function ReportTab({ jobId, employeeId }) {
 
             {prtSubmitted && !editing ? (
               <View style={styles.submittedCard}>
+                <View style={styles.sentBadge}><Text style={styles.sentBadgeText}>✓ SENT TO OFFICE</Text></View>
                 <Text style={styles.submittedTitle}>PRT SUBMITTED</Text>
-                <Text style={styles.submittedBody}>Today's production has been recorded.</Text>
+                <Text style={styles.submittedBody}>Today's production has been sent to the office.</Text>
                 {parseJSONArray(existingReport?.tasks, []).filter((t) => Number(t.pct_today) > 0).map((t, idx) => (
                   <View key={idx} style={styles.submittedTask}>
                     <Text style={styles.submittedTaskName}>{t.description}</Text>
@@ -540,6 +540,8 @@ const styles = StyleSheet.create({
   stickyBar: { flexDirection: 'row', gap: S.sm, paddingHorizontal: S.md, paddingTop: S.sm, paddingBottom: S.md, backgroundColor: C.linenCard, borderTopWidth: 1, borderTopColor: C.borderStrong },
   editBtn: { marginTop: S.md, backgroundColor: C.dark, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
   editBtnText: { fontFamily: F.display, fontSize: 14, color: C.teal, letterSpacing: 1 },
+  sentBadge: { alignSelf: 'center', backgroundColor: C.dark, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6, marginBottom: S.sm },
+  sentBadgeText: { fontFamily: F.display, fontSize: 12, color: C.teal, letterSpacing: 1.5 },
   draftBtn: { flex: 1, backgroundColor: C.linenDeep, borderRadius: 10, paddingVertical: 16, alignItems: 'center' },
   draftBtnText: { fontFamily: F.display, fontSize: 14, color: C.textBody, letterSpacing: 1 },
   submitBtn: { flex: 2, backgroundColor: C.dark, borderRadius: 10, paddingVertical: 16, alignItems: 'center' },
