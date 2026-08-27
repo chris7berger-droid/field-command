@@ -448,16 +448,6 @@ export default function ReportTab({ jobId, employeeId }) {
                   multiline
                   textAlignVertical="top"
                 />
-
-                <TouchableOpacity
-                  style={[styles.submitBtn, logSubmitting && { opacity: 0.5 }]}
-                  onPress={submitLogEntry}
-                  disabled={logSubmitting}
-                >
-                  <Text style={styles.submitBtnText}>
-                    {logSubmitting ? 'SAVING...' : `SUBMIT ${logType}`}
-                  </Text>
-                </TouchableOpacity>
               </View>
             ) : (
               <View style={styles.logButtons}>
@@ -487,6 +477,14 @@ export default function ReportTab({ jobId, employeeId }) {
           </TouchableOpacity>
           <TouchableOpacity style={[styles.submitBtn, prtSubmitting && { opacity: 0.5 }]} onPress={submitPRT} disabled={prtSubmitting}>
             <Text style={styles.submitBtnText}>{prtSubmitting ? 'SUBMITTING...' : 'SUBMIT PRT'}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {section === 'log' && logType && (
+        <View style={styles.stickyBar}>
+          <TouchableOpacity style={[styles.submitBtn, logSubmitting && { opacity: 0.5 }]} onPress={submitLogEntry} disabled={logSubmitting}>
+            <Text style={styles.submitBtnText}>{logSubmitting ? 'SAVING...' : `SUBMIT ${logType}`}</Text>
           </TouchableOpacity>
         </View>
       )}
