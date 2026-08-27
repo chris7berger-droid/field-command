@@ -61,6 +61,16 @@ export function parseJSON(text, fallback = []) {
   }
 }
 
+// Parse a JSON array that may be double-encoded. JSONB columns written as a
+// JSON.stringify'd string get stored as a JSON *string* and come back
+// double-encoded after the sync round-trip, so a single parse yields a string.
+// Parse once more in that case, and always return an array.
+export function parseJSONArray(text, fallback = []) {
+  let v = parseJSON(text, fallback);
+  if (typeof v === 'string') v = parseJSON(v, fallback);
+  return Array.isArray(v) ? v : fallback;
+}
+
 // Format hours as "8.5 hrs"
 export function fmtHrs(n) {
   if (n == null || isNaN(n)) return '—';

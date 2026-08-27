@@ -16,7 +16,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
-import { parseJSON, fmtPct, tod } from '../../lib/utils';
+import { parseJSON, parseJSONArray, fmtPct, tod } from '../../lib/utils';
 import { uploadPhotos } from '../../lib/photos';
 import LinenBackground from '../../components/LinenBackground';
 
@@ -73,7 +73,7 @@ export default function ReportTab({ jobId, employeeId }) {
 
   useEffect(() => {
     if (existingReport && existingReport.status === 'draft') {
-      setTaskEntries(parseJSON(existingReport.tasks, []));
+      setTaskEntries(parseJSONArray(existingReport.tasks, []));
     } else if (!existingReport && sowTasks.length > 0 && taskEntries.length === 0) {
       setTaskEntries(sowTasks.map((t) => ({ description: t.description, target_pct: t.target_pct, pct_today: 0, notes: '' })));
     }
@@ -260,7 +260,7 @@ export default function ReportTab({ jobId, employeeId }) {
               <View style={styles.submittedCard}>
                 <Text style={styles.submittedTitle}>PRT SUBMITTED</Text>
                 <Text style={styles.submittedBody}>Today's production rates have been recorded.</Text>
-                {parseJSON(existingReport?.tasks, []).map((t, idx) => (
+                {parseJSONArray(existingReport?.tasks, []).map((t, idx) => (
                   <View key={idx} style={styles.submittedTask}>
                     <Text style={styles.submittedTaskName}>{t.description}</Text>
                     <View style={styles.submittedPctRow}>
