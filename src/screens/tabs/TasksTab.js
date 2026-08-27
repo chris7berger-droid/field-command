@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
-import { parseJSON, fmtPct, fmtHrs, fmtDayLabel } from '../../lib/utils';
+import { parseJSON, fmtPct, fmtDayLabel } from '../../lib/utils';
 import LinenBackground from '../../components/LinenBackground';
 
 // Merge per-WTC day arrays into calendar-date groups (F3 spec).
@@ -66,6 +66,9 @@ function buildMergedDay(group, meta) {
   const materials = [];
   let crew = 0;
   let hours = 0;
+  let sqFt = 0;
+  let mobSeq = null;
+  const notes = [];
   for (const day of group) {
     const wt = day.work_type_name || null;
     for (const t of (day.tasks || [])) tasks.push({ ...t, work_type_name: wt });
@@ -77,8 +80,20 @@ function buildMergedDay(group, meta) {
     // the per-task work_type_name tag keeps both computable.
     crew = Math.max(crew, Number(day.crew_count) || 0);
     hours += Number(day.hours_planned) || 0; // hours additive even when crew shared
+    // Passthrough render fields (not merge logic): sq_ft is the same floor area
+    // when work types share a date → MAX not sum; mobilization_seq = the WTC
+    // number (take the lowest when they differ); scope_notes concatenated distinct.
+    sqFt = Math.max(sqFt, Number(day.sq_ft) || 0);
+    const seq = Number(day.mobilization_seq);
+    if (Number.isFinite(seq) && seq > 0) mobSeq = mobSeq == null ? seq : Math.min(mobSeq, seq);
+    const note = (day.scope_notes || '').trim();
+    if (note && !notes.includes(note)) notes.push(note);
   }
-  return { ...meta, crew_count: crew, hours_planned: hours, tasks, materials };
+  return {
+    ...meta, crew_count: crew, hours_planned: hours,
+    sq_ft: sqFt, mobilization_seq: mobSeq, scope_notes: notes.join('\n\n'),
+    tasks, materials,
+  };
 }
 
 export default function TasksTab({ jobId }) {
@@ -120,8 +135,16 @@ export default function TasksTab({ jobId }) {
   }, [wtcRows, jobRow]);
 
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
-  const [expandedMat, setExpandedMat] = useState(null); // idx of expanded material
+  // Check-off is a field convenience only — ephemeral UI state, not persisted
+  // (this is a visual pass; no writes / data-contract work per the seed).
+  const [checkedMats, setCheckedMats] = useState(() => new Set());
   const currentDay = days[selectedDayIdx] || null;
+
+  const toggleMat = (matKey) => setCheckedMats((prev) => {
+    const next = new Set(prev);
+    next.has(matKey) ? next.delete(matKey) : next.add(matKey);
+    return next;
+  });
 
   if (isLoading) {
     return <View style={styles.center}><Text style={styles.loadingText}>Loading tasks...</Text></View>;
@@ -158,23 +181,42 @@ export default function TasksTab({ jobId }) {
         ))}
       </ScrollView>
 
-      {currentDay && (
+      {currentDay && (() => {
+        const taskCount = (currentDay.tasks || []).length;
+        const hrs = Number(currentDay.hours_planned) || 0;
+        const hrsStr = Number.isInteger(hrs) ? String(hrs) : hrs.toFixed(1);
+        const meta = [];
+        if (currentDay.crew_count > 0) meta.push(`${currentDay.crew_count} CREW`);
+        if (hrs > 0) meta.push(`${hrsStr} HRS`);
+        if (currentDay.sq_ft > 0) meta.push(`${Number(currentDay.sq_ft).toLocaleString()} SQ FT`);
+        if (currentDay.mobilization_seq) meta.push(`WTC ${currentDay.mobilization_seq}`);
+        return (
         <>
           <View style={styles.dayHeader}>
-            <Text style={styles.dayTitle}>{currentDay.label}</Text>
-            <View style={styles.dayMeta}>
-              {currentDay.crew_count > 0 && <View style={styles.metaChip}><Text style={styles.metaText}>{currentDay.crew_count} crew</Text></View>}
-              {currentDay.hours_planned > 0 && <View style={styles.metaChip}><Text style={styles.metaText}>{fmtHrs(currentDay.hours_planned)}</Text></View>}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.dayCounter}>DAY {selectedDayIdx + 1} OF {days.length}</Text>
+              <Text style={styles.dayTitle}>{currentDay.label}</Text>
+            </View>
+            <View style={styles.taskCountBadge}>
+              <Text style={styles.taskCountNum}>{taskCount}</Text>
+              <Text style={styles.taskCountLabel}>{taskCount === 1 ? 'TASK' : 'TASKS'}</Text>
             </View>
           </View>
 
-          <Text style={styles.sectionTitle}>PLANNED TASKS</Text>
-          {(currentDay.tasks || []).length === 0 ? (
+          {meta.length > 0 && (
+            <View style={styles.metaBar}>
+              <Text style={styles.metaBarText}>{meta.join('   ·   ')}</Text>
+            </View>
+          )}
+
+          <Text style={styles.sectionTitle}>TODAY'S WORK</Text>
+          {taskCount === 0 ? (
             <Text style={styles.noItems}>No tasks for this day</Text>
           ) : (
             currentDay.tasks.map((task, idx) => (
               <View key={task.id || idx} style={styles.taskCard}>
                 <View style={styles.taskTop}>
+                  <View style={styles.taskNumCircle}><Text style={styles.taskNumText}>{idx + 1}</Text></View>
                   <Text style={styles.taskDesc} numberOfLines={2}>{task.description || 'Untitled task'}</Text>
                   <View style={styles.pctBadge}><Text style={styles.pctLabel}>TARGET </Text><Text style={styles.pctText}>{fmtPct(task.pct_complete)}</Text></View>
                 </View>
@@ -186,27 +228,51 @@ export default function TasksTab({ jobId }) {
             ))
           )}
 
+          {currentDay.scope_notes ? (
+            <>
+              <Text style={[styles.sectionTitle, { marginTop: S.lg }]}>INSTRUCTIONS</Text>
+              <View style={styles.instructionsCard}>
+                <Text style={styles.instructionsText}>{currentDay.scope_notes}</Text>
+              </View>
+            </>
+          ) : null}
+
           {(currentDay.materials || []).length > 0 && (
             <>
               <Text style={[styles.sectionTitle, { marginTop: S.lg }]}>MATERIALS</Text>
-              {currentDay.materials.map((mat, idx) => (
-                <TouchableOpacity key={idx} style={styles.materialRow} onPress={() => setExpandedMat(expandedMat === idx ? null : idx)} activeOpacity={0.7}>
-                  <View style={styles.materialTop}>
-                    <Text style={styles.materialName} numberOfLines={expandedMat === idx ? 0 : 1}>{mat.name || 'Unknown material'}</Text>
-                    <View style={styles.qtyBadge}><Text style={styles.qtyText}>{mat.qty_planned ?? '—'}</Text></View>
-                  </View>
-                  {expandedMat === idx && (
-                    <View style={styles.materialSpecs}>
-                      {mat.mils > 0 && <View style={styles.specRow}><Text style={styles.specLabel}>MILS</Text><Text style={styles.specValue}>{mat.mils}</Text></View>}
-                      {mat.coverage_rate ? <View style={styles.specRow}><Text style={styles.specLabel}>COVERAGE</Text><Text style={styles.specValue}>{mat.coverage_rate}</Text></View> : null}
-                      {mat.mix_time > 0 && <View style={styles.specRow}><Text style={styles.specLabel}>MIX TIME</Text><Text style={styles.specValue}>{mat.mix_time} min</Text></View>}
-                      {mat.mix_speed ? <View style={styles.specRow}><Text style={styles.specLabel}>MIX SPEED</Text><Text style={styles.specValue}>{mat.mix_speed}</Text></View> : null}
-                      {mat.cure_time ? <View style={styles.specRow}><Text style={styles.specLabel}>CURE TIME</Text><Text style={styles.specValue}>{mat.cure_time}</Text></View> : null}
-                      {!mat.mils && !mat.coverage_rate && !mat.mix_time && !mat.mix_speed && !mat.cure_time && <Text style={styles.noSpecs}>No specs entered</Text>}
-                    </View>
-                  )}
-                </TouchableOpacity>
-              ))}
+              <View style={styles.matTable}>
+                <View style={styles.matHeadRow}>
+                  <Text style={[styles.matHeadCell, styles.matColName]}>MATERIAL</Text>
+                  <Text style={[styles.matHeadCell, styles.matColQty]}>QTY</Text>
+                  <Text style={[styles.matHeadCell, styles.matColDetails]}>DETAILS</Text>
+                </View>
+                {currentDay.materials.map((mat, idx) => {
+                  const matKey = `${currentDay.key}:${mat.wtc_material_id || idx}`;
+                  const checked = checkedMats.has(matKey);
+                  const qty = Number(mat.qty_planned) || 0;
+                  const details = [];
+                  if (Number(mat.mix_time) > 0) details.push(`Mix ${mat.mix_time} min`);
+                  if (mat.mix_speed) details.push(String(mat.mix_speed));
+                  if (mat.cure_time) details.push(`Cure ${mat.cure_time}`);
+                  return (
+                    <TouchableOpacity key={matKey} style={styles.matRow} onPress={() => toggleMat(matKey)} activeOpacity={0.7}>
+                      <View style={styles.matColName}>
+                        <View style={styles.matNameWrap}>
+                          <View style={[styles.checkbox, checked && styles.checkboxOn]}>
+                            {checked ? <Text style={styles.checkMark}>✓</Text> : null}
+                          </View>
+                          <Text style={[styles.matName, checked && styles.matNameChecked]} numberOfLines={2}>{mat.name || 'Unknown material'}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.matColQty}>
+                        <Text style={styles.matQtyNum}>{qty > 0 ? qty : '—'}</Text>
+                        {mat.kit_size ? <Text style={styles.matQtyUnit}>{mat.kit_size}</Text> : null}
+                      </View>
+                      <Text style={[styles.matColDetails, styles.matDetailsText]}>{details.length ? details.join('\n') : '—'}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </>
           )}
 
@@ -218,7 +284,8 @@ export default function TasksTab({ jobId }) {
             </View>
           )}
         </>
-      )}
+        );
+      })()}
     </ScrollView>
     </LinenBackground>
   );
@@ -238,11 +305,14 @@ const styles = StyleSheet.create({
   dayPillActive: { backgroundColor: C.dark, borderColor: C.teal },
   dayPillText: { fontFamily: F.displayMed, fontSize: 13, color: C.textBody, letterSpacing: 1 },
   dayPillTextActive: { color: C.teal },
-  dayHeader: { marginBottom: S.md },
-  dayTitle: { fontFamily: F.display, fontSize: 22, color: C.textHead, letterSpacing: 1, textTransform: 'uppercase' },
-  dayMeta: { flexDirection: 'row', gap: S.sm, marginTop: 6 },
-  metaChip: { backgroundColor: C.dark, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
-  metaText: { fontFamily: F.bodyMed, fontSize: 12, color: C.teal },
+  dayHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: S.sm },
+  dayCounter: { fontFamily: F.displayMed, fontSize: 12, color: C.textMuted, letterSpacing: 2 },
+  dayTitle: { fontFamily: F.display, fontSize: 24, color: C.textHead, letterSpacing: 1, textTransform: 'uppercase', marginTop: 1 },
+  taskCountBadge: { backgroundColor: C.dark, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, alignItems: 'center', minWidth: 56 },
+  taskCountNum: { fontFamily: F.display, fontSize: 20, color: C.teal, letterSpacing: 0.5 },
+  taskCountLabel: { fontFamily: F.display, fontSize: 9, color: C.textFaint, letterSpacing: 1.5, marginTop: -2 },
+  metaBar: { backgroundColor: C.dark, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 9, marginBottom: S.md },
+  metaBarText: { fontFamily: F.displayMed, fontSize: 13, color: C.teal, letterSpacing: 1 },
   sectionTitle: { fontFamily: F.display, fontSize: 13, color: C.textMuted, letterSpacing: 2, marginBottom: S.sm },
   noItems: { fontFamily: F.body, fontSize: 14, color: C.textFaint, fontStyle: 'italic' },
   tbdBanner: { backgroundColor: C.dark, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8, marginBottom: S.md },
@@ -250,22 +320,32 @@ const styles = StyleSheet.create({
   wtTag: { fontFamily: F.display, fontSize: 10, color: C.textMuted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: S.sm },
   taskCard: { backgroundColor: C.linenCard, borderRadius: 10, padding: S.md, borderWidth: 1, borderColor: C.borderStrong, marginBottom: S.sm },
   taskTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: S.sm },
+  taskNumCircle: { width: 24, height: 24, borderRadius: 12, backgroundColor: C.dark, alignItems: 'center', justifyContent: 'center', marginRight: S.sm, marginTop: 1 },
+  taskNumText: { fontFamily: F.display, fontSize: 14, color: C.teal },
   taskDesc: { fontFamily: F.bodySemi, fontSize: 15, color: C.textHead, flex: 1, marginRight: S.sm, lineHeight: 22 },
   pctBadge: { backgroundColor: C.dark, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, flexDirection: 'row', alignItems: 'center' },
   pctLabel: { fontFamily: F.display, fontSize: 10, color: C.textFaint, letterSpacing: 1 },
   pctText: { fontFamily: F.display, fontSize: 14, color: C.teal, letterSpacing: 0.5 },
   progressTrack: { height: 6, backgroundColor: C.linenDeep, borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: '100%', backgroundColor: C.teal, borderRadius: 3 },
-  materialRow: { backgroundColor: C.linenCard, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 6, borderWidth: 1, borderColor: C.border },
-  materialTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  materialName: { fontFamily: F.body, fontSize: 14, color: C.textBody, flex: 1, marginRight: S.sm },
-  materialSpecs: { marginTop: S.sm, paddingTop: S.sm, borderTopWidth: 1, borderTopColor: C.border },
-  specRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
-  specLabel: { fontFamily: F.display, fontSize: 11, color: C.textFaint, letterSpacing: 1.5 },
-  specValue: { fontFamily: F.bodyMed, fontSize: 13, color: C.textBody },
-  noSpecs: { fontFamily: F.body, fontSize: 13, color: C.textFaint, fontStyle: 'italic' },
-  qtyBadge: { backgroundColor: C.dark, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 3 },
-  qtyText: { fontFamily: F.bodyMed, fontSize: 13, color: C.teal },
+  instructionsCard: { backgroundColor: C.linenCard, borderRadius: 10, padding: S.md, borderWidth: 1, borderColor: C.borderStrong, borderLeftWidth: 4, borderLeftColor: C.teal },
+  instructionsText: { fontFamily: F.body, fontSize: 14, color: C.textBody, lineHeight: 21 },
+  matTable: { backgroundColor: C.linenCard, borderRadius: 10, borderWidth: 1, borderColor: C.borderStrong, overflow: 'hidden' },
+  matHeadRow: { flexDirection: 'row', backgroundColor: C.dark, paddingVertical: 8, paddingHorizontal: S.md },
+  matHeadCell: { fontFamily: F.display, fontSize: 11, color: C.textFaint, letterSpacing: 1.5 },
+  matRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 10, paddingHorizontal: S.md, borderTopWidth: 1, borderTopColor: C.border },
+  matColName: { flex: 2.2, paddingRight: S.sm },
+  matColQty: { flex: 1, paddingRight: S.sm },
+  matColDetails: { flex: 1.6 },
+  matNameWrap: { flexDirection: 'row', alignItems: 'flex-start' },
+  checkbox: { width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: C.textFaint, marginRight: S.sm, marginTop: 1, alignItems: 'center', justifyContent: 'center' },
+  checkboxOn: { backgroundColor: C.dark, borderColor: C.teal },
+  checkMark: { fontFamily: F.bodyBold, fontSize: 12, color: C.teal, lineHeight: 15 },
+  matName: { fontFamily: F.bodyMed, fontSize: 14, color: C.textBody, flex: 1 },
+  matNameChecked: { color: C.textFaint, textDecorationLine: 'line-through' },
+  matQtyNum: { fontFamily: F.display, fontSize: 16, color: C.textHead },
+  matQtyUnit: { fontFamily: F.body, fontSize: 11, color: C.textLight, marginTop: -1 },
+  matDetailsText: { fontFamily: F.body, fontSize: 12, color: C.textLight, lineHeight: 17 },
   targetCard: { backgroundColor: C.dark, borderRadius: 10, padding: S.md, marginTop: S.lg, alignItems: 'center' },
   targetLabel: { fontFamily: F.display, fontSize: 12, color: C.textFaint, letterSpacing: 2, marginBottom: 4 },
   targetValue: { fontFamily: F.display, fontSize: 28, color: C.teal, letterSpacing: 1 },
