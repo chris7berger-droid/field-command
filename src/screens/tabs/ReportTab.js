@@ -70,6 +70,7 @@ export default function ReportTab({ jobId, employeeId }) {
 
   const [taskEntries, setTaskEntries] = useState([]);
   const [prtSubmitting, setPrtSubmitting] = useState(false);
+  const [editing, setEditing] = useState(false); // re-open a submitted PRT to edit + resubmit
 
   useEffect(() => {
     if (existingReport && existingReport.status === 'draft') {
@@ -82,6 +83,24 @@ export default function ReportTab({ jobId, employeeId }) {
   const updateTask = useCallback((idx, field, value) => {
     setTaskEntries((prev) => { const u = [...prev]; u[idx] = { ...u[idx], [field]: value }; return u; });
   }, []);
+
+  // Re-open a submitted PRT for editing: show the full (flat) task list with the
+  // previously reported values prefilled, so they can correct today's numbers or
+  // add ahead-of-schedule work before resubmitting.
+  const startEdit = useCallback(() => {
+    const submitted = parseJSONArray(existingReport?.tasks, []);
+    const byDesc = new Map(submitted.map((t) => [t.description, t]));
+    setTaskEntries(sowTasks.map((t) => {
+      const prev = byDesc.get(t.description);
+      return {
+        description: t.description,
+        target_pct: t.target_pct,
+        pct_today: prev ? prev.pct_today : 0,
+        notes: prev ? (prev.notes || '') : '',
+      };
+    }));
+    setEditing(true);
+  }, [existingReport, sowTasks]);
 
   // ── Daily Log State ─────────────────────────────────────
   const { data: logEntries, isLoading: logLoading } = useQuery(
@@ -130,8 +149,10 @@ export default function ReportTab({ jobId, employeeId }) {
 
     setPrtSubmitting(true);
     try {
+      // Save only the tasks actually worked today — not every seeded SOW task —
+      // so the submitted report reflects real production, not a wall of 0%s.
       const data = {
-        tasks: JSON.stringify(taskEntries),
+        tasks: JSON.stringify(worked),
         materials_used: '[]',
         hours_regular: 0, hours_ot: 0,
         photos: '[]',
@@ -152,6 +173,7 @@ export default function ReportTab({ jobId, employeeId }) {
         );
       }
       Vibration.vibrate([100, 50, 100]);
+      setEditing(false);
     } finally {
       setPrtSubmitting(false);
     }
@@ -256,11 +278,11 @@ export default function ReportTab({ jobId, employeeId }) {
             <Text style={styles.sectionTitle}>PRODUCTION RATE TRACKER</Text>
             <Text style={styles.sectionHint}>Enter your daily % for each task. Hit the target or beat it.</Text>
 
-            {prtSubmitted ? (
+            {prtSubmitted && !editing ? (
               <View style={styles.submittedCard}>
                 <Text style={styles.submittedTitle}>PRT SUBMITTED</Text>
-                <Text style={styles.submittedBody}>Today's production rates have been recorded.</Text>
-                {parseJSONArray(existingReport?.tasks, []).map((t, idx) => (
+                <Text style={styles.submittedBody}>Today's production has been recorded.</Text>
+                {parseJSONArray(existingReport?.tasks, []).filter((t) => Number(t.pct_today) > 0).map((t, idx) => (
                   <View key={idx} style={styles.submittedTask}>
                     <Text style={styles.submittedTaskName}>{t.description}</Text>
                     <View style={styles.submittedPctRow}>
@@ -276,6 +298,9 @@ export default function ReportTab({ jobId, employeeId }) {
                     {t.notes ? <Text style={styles.submittedNotes}>{t.notes}</Text> : null}
                   </View>
                 ))}
+                <TouchableOpacity style={styles.editBtn} onPress={startEdit}>
+                  <Text style={styles.editBtnText}>EDIT &amp; RESUBMIT</Text>
+                </TouchableOpacity>
               </View>
             ) : (
               <>
@@ -452,7 +477,7 @@ export default function ReportTab({ jobId, employeeId }) {
 
       {/* Sticky action bar — always visible so the crew can save from anywhere
           in the form, not only after scrolling to the bottom. */}
-      {section === 'prt' && !prtSubmitted && taskEntries.length > 0 && (
+      {section === 'prt' && (!prtSubmitted || editing) && taskEntries.length > 0 && (
         <View style={styles.stickyBar}>
           <TouchableOpacity style={styles.draftBtn} onPress={savePRTDraft}>
             <Text style={styles.draftBtnText}>SAVE DRAFT</Text>
@@ -510,6 +535,8 @@ const styles = StyleSheet.create({
 
   actionRow: { flexDirection: 'row', gap: S.sm, marginTop: S.sm },
   stickyBar: { flexDirection: 'row', gap: S.sm, paddingHorizontal: S.md, paddingTop: S.sm, paddingBottom: S.md, backgroundColor: C.linenCard, borderTopWidth: 1, borderTopColor: C.borderStrong },
+  editBtn: { marginTop: S.md, backgroundColor: C.dark, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
+  editBtnText: { fontFamily: F.display, fontSize: 14, color: C.teal, letterSpacing: 1 },
   draftBtn: { flex: 1, backgroundColor: C.linenDeep, borderRadius: 10, paddingVertical: 16, alignItems: 'center' },
   draftBtnText: { fontFamily: F.display, fontSize: 14, color: C.textBody, letterSpacing: 1 },
   submitBtn: { flex: 2, backgroundColor: C.dark, borderRadius: 10, paddingVertical: 16, alignItems: 'center' },
