@@ -115,8 +115,18 @@ export default function ReportTab({ jobId, employeeId }) {
 
   // ── PRT Submit ──────────────────────────────────────────
   const submitPRT = useCallback(async () => {
-    const missing = taskEntries.find(t => !t.notes || !t.notes.trim());
-    if (missing) { Alert.alert('Notes required', 'Every task needs a note before submitting.'); return; }
+    // Only tasks worked today (a % entered) need a note — a task left at 0 wasn't
+    // touched today, so don't force a note on it.
+    const worked = taskEntries.filter(t => Number(t.pct_today) > 0);
+    if (worked.length === 0) {
+      Alert.alert('Nothing to report yet', 'Enter today’s % for at least one task before submitting.');
+      return;
+    }
+    const missing = worked.find(t => !t.notes || !t.notes.trim());
+    if (missing) {
+      Alert.alert('Note needed', `Add a note for “${missing.description || 'this task'}” before submitting.`);
+      return;
+    }
 
     setPrtSubmitting(true);
     try {
