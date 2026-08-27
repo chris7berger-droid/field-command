@@ -22,7 +22,7 @@ export default function JobDetailScreen({ route, navigation, user }) {
       case 'TimeClock':
         return <TimeClockTab jobId={jobId} jobName={jobName} employeeId={employeeId} />;
       case 'Tasks':
-        return <TasksTab jobId={jobId} />;
+        return <TasksTab jobId={jobId} employeeId={employeeId} employeeName={user?.name || ''} />;
       case 'Report':
         return <ReportTab jobId={jobId} employeeId={employeeId} />;
       default:

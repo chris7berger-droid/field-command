@@ -2,7 +2,9 @@
  * PowerSync ↔ Supabase Connector
  *
  * - fetchCredentials: provides PowerSync with the Supabase JWT
- * - uploadData: pushes local writes (time_punches, daily_production_reports) to Supabase
+ * - uploadData: pushes local writes (time_punches, daily_production_reports,
+ *   daily_log_entries, job_material_checks) to Supabase. Table-generic: any
+ *   writable table in the PowerSync schema syncs up here automatically.
  */
 import { UpdateType } from '@powersync/react-native';
 import { supabase } from './supabase';

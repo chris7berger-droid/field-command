@@ -23,3 +23,4 @@ bucket_definitions:
       - SELECT * FROM time_punches
       - SELECT * FROM daily_production_reports
       - SELECT * FROM daily_log_entries
+      - SELECT * FROM job_material_checks
