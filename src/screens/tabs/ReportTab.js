@@ -174,6 +174,9 @@ export default function ReportTab({ jobId, employeeId }) {
       }
       Vibration.vibrate([100, 50, 100]);
       setEditing(false);
+      Alert.alert('PRT sent', `${worked.length} task${worked.length !== 1 ? 's' : ''} submitted to the office.`);
+    } catch (e) {
+      Alert.alert('Not sent', `Could not save the PRT: ${e?.message || 'unknown error'}. Try again.`);
     } finally {
       setPrtSubmitting(false);
     }
