@@ -19,7 +19,7 @@ import { fetchWeather } from '../lib/weather';
 import {
   DUTY_LOGS, PRT_DUTY, dutyState,
   punchLookbackDate, openClockInPunch, isOvernightShift,
-  ackNightWork, isNightWorkAcked, punchDay,
+  ackNightWork, isNightWorkAcked, punchDay, punchesForOpenShift,
 } from '../lib/dayDuty';
 
 const STATUS_CONFIG = {
@@ -77,7 +77,7 @@ export default function PunchStatusBar() {
   const nightChosen = overnight && isNightWorkAcked(openPunch?.id);
   const showOvernight = overnight && !nightChosen;
 
-  const { status, elapsed } = deriveStatus(punchList, now);
+  const { status, elapsed } = deriveStatus(punchList, now, today);
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.not_clocked_in;
   const isActive = status !== 'clocked_out' && status !== 'shift_done';
 
@@ -85,75 +85,53 @@ export default function PunchStatusBar() {
 
   const alerts = useMemo(() => {
     if (showOvernight) return [];
-    if (punchList.length === 0) return [];
+    if (!openPunch) return [];
 
-    const logsByJob = new Map();
+    const clockIn = openPunch;
+    const jobId = String(clockIn.job_id);
+    const types = new Set();
     for (const e of (logEntries || [])) {
-      if (!e.created_at) continue;
+      if (String(e.job_id) !== jobId || !e.created_at) continue;
       const when = new Date(e.created_at);
       if (Number.isNaN(when.getTime()) || localYmd(when) !== workDate) continue;
-      const id = String(e.job_id);
-      if (!logsByJob.has(id)) logsByJob.set(id, new Set());
-      logsByJob.get(id).add(e.entry_type);
+      types.add(e.entry_type);
     }
-    const prtByJob = new Set(
-      (prtReports || [])
-        .filter((r) => r.report_date === workDate)
-        .map((r) => String(r.job_id))
+    const prtDone = (prtReports || []).some(
+      (r) => String(r.job_id) === jobId && r.report_date === workDate
     );
 
-    const byJob = new Map();
-    for (const p of punchList) {
-      const id = String(p.job_id);
-      if (!byJob.has(id)) byJob.set(id, []);
-      byJob.get(id).push(p);
-    }
-
-    const seen = new Set();
     const result = [];
     const pushAlert = (label, color, bg) => {
-      if (seen.has(label)) return;
-      seen.add(label);
       result.push({ label, color, bg });
     };
 
-    for (const [, list] of byJob) {
-      const clockIn = list.find((p) => p.punch_type === 'clock_in');
-      if (!clockIn) continue;
-      const clockOut = list.find((p) => p.punch_type === 'clock_out');
-      if (clockOut) continue;
-      const jobId = String(clockIn.job_id);
-      const types = logsByJob.get(jobId) || new Set();
-      const prtDone = prtByJob.has(jobId);
-
-      for (const d of DUTY_LOGS) {
-        const state = dutyState({
-          done: types.has(d.key),
-          clockInTime: clockIn.punch_time,
-          now,
-          dueAfterMs: d.dueAfterMs,
-          dueHour: d.dueHour,
-        });
-        if (state !== 'due') continue;
-        if (d.key === 'SOD') pushAlert('SOD LOG NEEDED', C.amber, ALERT_AMBER);
-        if (d.key === 'MOD') pushAlert('MID DAY LOG DUE', C.amber, ALERT_AMBER);
-        if (d.key === 'EOD') pushAlert('EOD LOG REQUIRED', '#ef4444', ALERT_RED);
-      }
-
-      const prtState = dutyState({
-        done: prtDone,
+    for (const d of DUTY_LOGS) {
+      const state = dutyState({
+        done: types.has(d.key),
         clockInTime: clockIn.punch_time,
         now,
-        dueAfterMs: PRT_DUTY.dueAfterMs,
-        dueHour: PRT_DUTY.dueHour,
+        dueAfterMs: d.dueAfterMs,
+        dueHour: d.dueHour,
       });
-      if (prtState === 'due') {
-        pushAlert('PRT NOT SUBMITTED', '#ef4444', ALERT_RED);
-      }
+      if (state !== 'due') continue;
+      if (d.key === 'SOD') pushAlert('SOD LOG NEEDED', C.amber, ALERT_AMBER);
+      if (d.key === 'MOD') pushAlert('MID DAY LOG DUE', C.amber, ALERT_AMBER);
+      if (d.key === 'EOD') pushAlert('EOD LOG REQUIRED', '#ef4444', ALERT_RED);
+    }
+
+    const prtState = dutyState({
+      done: prtDone,
+      clockInTime: clockIn.punch_time,
+      now,
+      dueAfterMs: PRT_DUTY.dueAfterMs,
+      dueHour: PRT_DUTY.dueHour,
+    });
+    if (prtState === 'due') {
+      pushAlert('PRT NOT SUBMITTED', '#ef4444', ALERT_RED);
     }
 
     return result;
-  }, [punchList, logEntries, prtReports, now, workDate, showOvernight]);
+  }, [logEntries, prtReports, now, workDate, showOvernight, openPunch]);
 
   const punchOutNow = useCallback(async () => {
     if (!openPunch || busy) return;
@@ -263,12 +241,13 @@ export default function PunchStatusBar() {
   );
 }
 
-function deriveStatus(punches, now) {
-  if (punches.length === 0) {
+function deriveStatus(punches, now, today) {
+  const shift = punchesForOpenShift(punches, null, today);
+  if (shift.length === 0) {
     return { status: 'not_clocked_in', elapsed: null };
   }
 
-  const last = punches[punches.length - 1];
+  const last = shift[shift.length - 1];
   const lastTime = new Date(last.punch_time);
   const elapsedMs = now.getTime() - lastTime.getTime();
   const elapsed = formatElapsed(elapsedMs);
@@ -277,9 +256,9 @@ function deriveStatus(punches, now) {
     case 'drive_start':
       return { status: 'driving', elapsed };
     case 'drive_end': {
-      const hasClockOut = punches.some((p) => p.punch_type === 'clock_out');
+      const hasClockOut = shift.some((p) => p.punch_type === 'clock_out');
       if (hasClockOut) return { status: 'shift_done', elapsed: null };
-      const hasClockIn = punches.some((p) => p.punch_type === 'clock_in');
+      const hasClockIn = shift.some((p) => p.punch_type === 'clock_in');
       if (!hasClockIn) return { status: 'not_clocked_in', elapsed: null };
       return { status: 'on_site', elapsed };
     }
@@ -290,12 +269,8 @@ function deriveStatus(punches, now) {
     case 'lunch_end':
       return { status: 'on_site', elapsed };
     case 'clock_out': {
-      const closed = [...punches].reverse().find((p) => p.punch_type === 'clock_in');
-      const inDay = punchDay(closed);
-      const outDay = punchDay(last);
-      if (inDay && outDay && inDay !== outDay) {
-        return { status: 'not_clocked_in', elapsed: null };
-      }
+      const hasIn = shift.some((p) => p.punch_type === 'clock_in');
+      if (!hasIn) return { status: 'not_clocked_in', elapsed: null };
       return { status: 'shift_done', elapsed: null };
     }
     default:

@@ -61,6 +61,23 @@ export function isOvernightShift(punches, today = tod()) {
   return start.getTime() < new Date(`${today}T00:00:00`).getTime();
 }
 
+// Punches that belong to the live shift: the open clock-in onward, or
+// today's punches only if nobody is on the clock. Yesterday's finished
+// shift must not lock Time Clock or the status bar.
+export function punchesForOpenShift(punches, jobId, today = tod()) {
+  const list = punches || [];
+  const open = openClockInPunch(list);
+  if (open && (jobId == null || String(open.job_id) === String(jobId))) {
+    const id = String(open.job_id);
+    const start = String(open.punch_time || '');
+    return list.filter((p) => String(p.job_id) === id && String(p.punch_time || '') >= start);
+  }
+  return list.filter((p) => {
+    if (jobId != null && String(p.job_id) !== String(jobId)) return false;
+    return punchDay(p) === today;
+  });
+}
+
 export const DUTY_LOGS = [
   { key: 'SOD', label: 'START OF DAY', short: 'SOD', dueAfterMs: 15 * 60 * 1000, dueHour: null },
   { key: 'MOD', label: 'MID DAY', short: 'MOD', dueAfterMs: 4 * 60 * 60 * 1000, dueHour: 12 },

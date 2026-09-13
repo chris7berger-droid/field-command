@@ -24,7 +24,7 @@ import { C, F, S } from '../../lib/tokens';
 import { fmtTime, tod } from '../../lib/utils';
 import { getCurrentPosition, checkGeofence, DEMO_POSITIONS } from '../../lib/location';
 import { fetchWeather } from '../../lib/weather';
-import { missingClockOutDuties, openClockJobId, switchJobClockCopy, punchLookbackDate, shiftDate } from '../../lib/dayDuty';
+import { missingClockOutDuties, openClockJobId, switchJobClockCopy, punchLookbackDate, shiftDate, punchesForOpenShift } from '../../lib/dayDuty';
 import { jobNumber } from '../../lib/trips';
 import LinenBackground from '../../components/LinenBackground';
 
@@ -114,6 +114,10 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
   );
 
   const workDate = shiftDate(allTodayPunches);
+  const activePunches = useMemo(
+    () => punchesForOpenShift(todayPunches, jobId, tod()),
+    [todayPunches, jobId]
+  );
 
   // PRT + daily logs: clock-out waits until SOD, MOD, EOD, and this shift's PRT are in.
   const { data: prtRows } = useQuery(
@@ -127,32 +131,39 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
   );
 
   useEffect(() => {
-    if (!todayPunches || todayPunches.length === 0) return;
-    setPunchHistory(todayPunches);
+    if (!activePunches || activePunches.length === 0) {
+      setPunchHistory([]);
+      setCurrentStepIdx(0);
+      setShiftStart(null);
+      setLunchStart(null);
+      return;
+    }
+    setPunchHistory(activePunches);
 
     // Restore step index
     let restored = 0;
     for (let i = 0; i < steps.length; i++) {
       const needed = steps.slice(0, i + 1).filter((s) => s.punch === steps[i].punch).length;
-      const found = todayPunches.filter((p) => p.punch_type === steps[i].punch).length;
+      const found = activePunches.filter((p) => p.punch_type === steps[i].punch).length;
       if (found >= needed) restored = i + 1;
       else break;
     }
     setCurrentStepIdx(restored);
 
-    const clockIn = todayPunches.find((p) => p.punch_type === 'clock_in');
+    const clockIn = activePunches.find((p) => p.punch_type === 'clock_in');
     if (clockIn) setShiftStart(new Date(clockIn.punch_time));
 
-    const lunchStartPunch = todayPunches.find((p) => p.punch_type === 'lunch_start');
-    const lunchEndPunch = todayPunches.find((p) => p.punch_type === 'lunch_end');
+    const lunchStartPunch = activePunches.find((p) => p.punch_type === 'lunch_start');
+    const lunchEndPunch = activePunches.find((p) => p.punch_type === 'lunch_end');
     if (lunchStartPunch && !lunchEndPunch) setLunchStart(new Date(lunchStartPunch.punch_time));
+    else setLunchStart(null);
 
     if (isPW) {
-      const hasDrive = todayPunches.some((p) => p.punch_type === 'drive_start');
+      const hasDrive = activePunches.some((p) => p.punch_type === 'drive_start');
       if (hasDrive) setCompanyVehicle(true);
-      else if (todayPunches.length > 0) setCompanyVehicle(false);
+      else if (activePunches.length > 0) setCompanyVehicle(false);
     }
-  }, [todayPunches, steps, isPW]);
+  }, [activePunches, steps, isPW]);
 
   // ── Live clock ────────────────────────────────────────
   useEffect(() => {
