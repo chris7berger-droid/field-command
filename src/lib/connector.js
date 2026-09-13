@@ -39,6 +39,16 @@ function coerceJsonColumns(tableName, data) {
   return out;
 }
 
+// Postgres UUID columns reject "". Drop the empty string so the upsert can
+// succeed (nullable) instead of PowerSync discarding the whole PRT write.
+function sanitizeUpload(tableName, data) {
+  const out = coerceJsonColumns(tableName, data);
+  if (tableName === 'daily_production_reports' && out && out.wtc_id === '') {
+    out.wtc_id = null;
+  }
+  return out;
+}
+
 export class SupabaseConnector {
   constructor() {
     this.client = supabase;
@@ -78,10 +88,10 @@ export class SupabaseConnector {
 
         switch (op.op) {
           case UpdateType.PUT:
-            result = await table.upsert({ ...coerceJsonColumns(op.table, op.opData), id: op.id });
+            result = await table.upsert({ ...sanitizeUpload(op.table, op.opData), id: op.id });
             break;
           case UpdateType.PATCH:
-            result = await table.update(coerceJsonColumns(op.table, op.opData)).eq('id', op.id);
+            result = await table.update(sanitizeUpload(op.table, op.opData)).eq('id', op.id);
             break;
           case UpdateType.DELETE:
             result = await table.delete().eq('id', op.id);

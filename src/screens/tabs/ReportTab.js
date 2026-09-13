@@ -16,9 +16,10 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
-import { parseJSON, parseJSONArray, fmtPct, tod } from '../../lib/utils';
+import { parseJSON, parseJSONArray, tod } from '../../lib/utils';
 import { uploadPhotos } from '../../lib/photos';
 import LinenBackground from '../../components/LinenBackground';
+import { mergeDaysByDate } from './TasksTab';
 
 const LOG_TYPES = [
   { key: 'SOD', label: 'START OF DAY', hint: 'Photos of job site at start' },
@@ -26,39 +27,202 @@ const LOG_TYPES = [
   { key: 'EOD', label: 'END OF DAY', hint: 'How the site was left + all progress' },
 ];
 
+// Live Schedule job for this call_log (same contract as TasksTab).
+const LIVE_JOB_FILTER = `(deleted IS NULL OR deleted = 'No')`;
+const LIVE_JOB_SQL = `(SELECT id FROM jobs WHERE call_log_id = ? AND ${LIVE_JOB_FILTER} ORDER BY id DESC LIMIT 1)`;
+
+function tasksFromDays(dayList) {
+  const tasks = [];
+  for (const day of (dayList || [])) {
+    for (const t of (day.tasks || [])) {
+      tasks.push({
+        id: t.id,
+        description: t.description,
+        target_pct: Number(t.pct_complete) || 0,
+      });
+    }
+  }
+  return tasks;
+}
+
+function uniqueTasksByDescription(tasks) {
+  const out = [];
+  for (const t of tasks) {
+    if (!out.find((ex) => ex.description === t.description)) out.push(t);
+  }
+  return out;
+}
+
+// Dated-today wins (crew is looking at that SOW day). Otherwise the next
+// production day: how many PRTs already went in, matching office day-count.
+function pickSowDaysForPrt(days, today, submittedPriorCount) {
+  const list = days || [];
+  const datedToday = list.filter((d) => d.date && d.date === today);
+  if (datedToday.length > 0) return datedToday;
+  if (list.length === 0) return [];
+  const idx = Math.min(Math.max(submittedPriorCount, 0), list.length - 1);
+  return [list[idx]];
+}
+
+function seedTaskEntries(source, saved, local) {
+  const byDesc = new Map();
+  for (const t of (saved || [])) byDesc.set(t.description, t);
+  for (const t of (local || [])) byDesc.set(t.description, t);
+  return source.map((t) => {
+    const prev = byDesc.get(t.description);
+    return {
+      description: t.description,
+      target_pct: t.target_pct,
+      pct_today: prev ? Number(prev.pct_today) || 0 : 0,
+      notes: prev ? (prev.notes || '') : '',
+    };
+  });
+}
+
+function sameTaskEntries(a, b) {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((t, i) => (
+    t.description === b[i].description
+    && t.target_pct === b[i].target_pct
+    && t.pct_today === b[i].pct_today
+    && (t.notes || '') === (b[i].notes || '')
+  ));
+}
+
+// % of today's SOW target. Empty/0 stays quiet (not yet filled).
+// Three colors (teal / amber / red); five miss rungs live in the words.
+const NOTE_DEFAULT = 'Note required — what happened today';
+
+const PRT_RUNGS = {
+  hit: {
+    badge: 'HIT TARGET',
+    note: 'What made this possible?',
+    bar: C.teal,
+    badgeBg: C.dark,
+    badgeFg: C.teal,
+  },
+  // 80–99% is the learning band, not a warning. Teal bar = a lot got done;
+  // dark badge asks how the last gap would have closed. Amber is for 60–79%.
+  close: {
+    badge: 'CLOSE — WHAT WOULD HAVE HIT 100%?',
+    note: 'What could you have done to hit 100%, or what would have allowed you to hit 100%?',
+    bar: C.tealDark,
+    badgeBg: C.dark,
+    badgeFg: C.linenCard,
+  },
+  behind: {
+    badge: 'BEHIND — NOTIFY SALES',
+    note: 'Why we missed. Notify Sales.',
+    bar: C.amber,
+    badgeBg: C.amber,
+    badgeFg: C.dark,
+  },
+  delay: {
+    badge: 'DELAY — TELL SALES',
+    note: 'Tell Sales the delay and the reason. Does this cost a day?',
+    bar: C.red,
+    badgeBg: C.red,
+    badgeFg: C.white,
+  },
+  risk: {
+    badge: 'DAY AT RISK',
+    note: 'What stopped production. Who did you tell.',
+    bar: C.red,
+    badgeBg: C.red,
+    badgeFg: C.white,
+  },
+  nearZero: {
+    badge: 'NOTIFY SALES IMMEDIATELY',
+    note: "Almost none of today's target got done. Write what blocked it, then notify Sales immediately.",
+    bar: C.red,
+    badgeBg: C.red,
+    badgeFg: C.white,
+  },
+};
+
+function prtRung(pctToday, targetPct) {
+  const today = Number(pctToday) || 0;
+  const target = Number(targetPct) || 0;
+  if (today <= 0) return null;
+  const ratio = target > 0 ? (today / target) * 100 : today;
+  if (ratio >= 100) return PRT_RUNGS.hit;
+  if (ratio >= 80) return PRT_RUNGS.close;
+  if (ratio >= 60) return PRT_RUNGS.behind;
+  if (ratio >= 40) return PRT_RUNGS.delay;
+  if (ratio >= 20) return PRT_RUNGS.risk;
+  return PRT_RUNGS.nearZero;
+}
+
 export default function ReportTab({ jobId, employeeId }) {
   const db = usePowerSync();
   const today = tod();
   const [section, setSection] = useState('prt'); // 'prt' | 'log'
 
-  // ── Field SOW data ──────────────────────────────────────
-  const { data: jobRows } = useQuery(
-    `SELECT field_sow FROM jobs WHERE call_log_id = ? LIMIT 1`,
+  // Same SOW source as the Field SOW tab: canonical job_wtcs, then the
+  // jobs.field_sow mirror. Do not read proposal_wtc — that LIMIT 10 → [0]
+  // pick is an arbitrary WTC and is why PRT targets drifted from the SOW.
+  const { data: wtcRows } = useQuery(
+    `SELECT field_sow, work_type_name, proposal_wtc_id FROM job_wtcs
+      WHERE job_id = ${LIVE_JOB_SQL}
+      ORDER BY position`,
     [jobId]
   );
-  const { data: wtcRows } = useQuery(
-    `SELECT * FROM proposal_wtc WHERE field_sow IS NOT NULL LIMIT 10`
+  const { data: jobRows } = useQuery(
+    `SELECT field_sow FROM jobs
+      WHERE call_log_id = ? AND ${LIVE_JOB_FILTER}
+      ORDER BY id DESC LIMIT 1`,
+    [jobId]
+  );
+  const { data: tripRows } = useQuery(
+    `SELECT seq, label FROM job_mobilizations
+      WHERE job_id = ${LIVE_JOB_SQL}
+      ORDER BY seq`,
+    [jobId]
   );
   const jobRow = jobRows?.[0] || null;
-  const wtc = wtcRows?.[0] || null;
-  const fieldSow = useMemo(() => {
-    if (jobRow?.field_sow) return parseJSON(jobRow.field_sow, []);
-    if (wtc?.field_sow) return parseJSON(wtc.field_sow, []);
-    return [];
-  }, [jobRow, wtc]);
 
-  // Unique tasks from all days with their target %
-  const sowTasks = useMemo(() => {
-    const tasks = [];
-    fieldSow.forEach((day) => {
-      (day.tasks || []).forEach((t) => {
-        if (!tasks.find((ex) => ex.description === t.description)) {
-          tasks.push({ id: t.id, description: t.description, target_pct: t.pct_complete || 0 });
+  const { days } = useMemo(() => {
+    if (wtcRows && wtcRows.length > 0) {
+      const tagged = [];
+      for (const w of wtcRows) {
+        for (const day of parseJSON(w.field_sow, [])) {
+          tagged.push({ ...day, work_type_name: w.work_type_name });
         }
-      });
-    });
-    return tasks;
-  }, [fieldSow]);
+      }
+      return mergeDaysByDate(tagged, tripRows);
+    }
+    if (jobRow?.field_sow) {
+      const tagged = parseJSON(jobRow.field_sow, []).map((d) => ({ ...d, work_type_name: null }));
+      return mergeDaysByDate(tagged, tripRows);
+    }
+    return { days: [], allTbd: false };
+  }, [wtcRows, jobRow, tripRows]);
+
+  // Production day = prior submitted PRTs (office measures by day count, not
+  // calendar date). When Schedule has dated a SOW day as today, use that day.
+  const { data: priorPrtRows } = useQuery(
+    `SELECT DISTINCT report_date FROM daily_production_reports
+      WHERE job_id = ? AND report_date != ?
+        AND (status = 'submitted' OR status = 'approved')`,
+    [jobId, today]
+  );
+  const priorPrtCount = priorPrtRows?.length || 0;
+  const prtDays = useMemo(
+    () => pickSowDaysForPrt(days, today, priorPrtCount),
+    [days, today, priorPrtCount]
+  );
+
+  const todaySowTasks = useMemo(() => tasksFromDays(prtDays), [prtDays]);
+  const allSowTasks = useMemo(() => {
+    const used = new Set(prtDays.map((d) => d.key));
+    const rest = days.filter((d) => !used.has(d.key));
+    return uniqueTasksByDescription([...todaySowTasks, ...tasksFromDays(rest)]);
+  }, [days, prtDays, todaySowTasks]);
+  const prtDayLabel = prtDays.map((d) => d.label).filter(Boolean).join(' · ');
+  // Postgres wtc_id is a UUID (FK to proposal_wtc). Empty string is rejected
+  // and PowerSync discards the write — which is why PRT looked like it wouldn't save.
+  const sowWtcId = (wtcRows || []).map((w) => w.proposal_wtc_id).find(Boolean) || null;
 
   // ── PRT State ───────────────────────────────────────────
   const { data: existingReports } = useQuery(
@@ -72,13 +236,19 @@ export default function ReportTab({ jobId, employeeId }) {
   const [prtSubmitting, setPrtSubmitting] = useState(false);
   const [editing, setEditing] = useState(false); // re-open a submitted PRT to edit + resubmit
 
+  const sowSource = editing ? allSowTasks : todaySowTasks;
+  const sowSourceKey = sowSource.map((t) => `${t.description}:${t.target_pct}`).join('|');
+
   useEffect(() => {
-    if (existingReport && existingReport.status === 'draft') {
-      setTaskEntries(parseJSONArray(existingReport.tasks, []));
-    } else if (!existingReport && sowTasks.length > 0 && taskEntries.length === 0) {
-      setTaskEntries(sowTasks.map((t) => ({ description: t.description, target_pct: t.target_pct, pct_today: 0, notes: '' })));
-    }
-  }, [existingReport, sowTasks]);
+    if (prtSubmitted && !editing) return;
+    if (sowSource.length === 0) return;
+    const saved = parseJSONArray(existingReport?.tasks, []);
+    setTaskEntries((prev) => {
+      const next = seedTaskEntries(sowSource, saved, prev);
+      if (sameTaskEntries(prev, next)) return prev;
+      return next;
+    });
+  }, [existingReport?.id, existingReport?.status, existingReport?.tasks, sowSourceKey, prtSubmitted, editing]);
 
   const updateTask = useCallback((idx, field, value) => {
     setTaskEntries((prev) => { const u = [...prev]; u[idx] = { ...u[idx], [field]: value }; return u; });
@@ -86,21 +256,12 @@ export default function ReportTab({ jobId, employeeId }) {
 
   // Re-open a submitted PRT for editing: show the full (flat) task list with the
   // previously reported values prefilled, so they can correct today's numbers or
-  // add ahead-of-schedule work before resubmitting.
+  // add ahead-of-schedule work before resubmitting. Targets still come from SOW.
   const startEdit = useCallback(() => {
     const submitted = parseJSONArray(existingReport?.tasks, []);
-    const byDesc = new Map(submitted.map((t) => [t.description, t]));
-    setTaskEntries(sowTasks.map((t) => {
-      const prev = byDesc.get(t.description);
-      return {
-        description: t.description,
-        target_pct: t.target_pct,
-        pct_today: prev ? prev.pct_today : 0,
-        notes: prev ? (prev.notes || '') : '',
-      };
-    }));
+    setTaskEntries(seedTaskEntries(allSowTasks, submitted, []));
     setEditing(true);
-  }, [existingReport, sowTasks]);
+  }, [existingReport, allSowTasks]);
 
   // ── Daily Log State ─────────────────────────────────────
   const { data: logEntries, isLoading: logLoading } = useQuery(
@@ -121,7 +282,15 @@ export default function ReportTab({ jobId, employeeId }) {
   const pickPhoto = useCallback(async (setter) => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') { Alert.alert('Permission needed', 'Photo library access is required.'); return; }
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7, allowsMultipleSelection: true });
+    // Single-select uses the older iOS picker, which dismisses. Multi-select
+    // opens PHPicker (the Photos/Collections sheet) which can stick open on
+    // iOS 26 / Simulator. Crew taps FROM LIBRARY again to add more.
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.7,
+      allowsMultipleSelection: false,
+      presentationStyle: ImagePicker.UIImagePickerPresentationStyle.FULL_SCREEN,
+    });
     if (!result.canceled && result.assets) setter((prev) => [...prev, ...result.assets.map((a) => a.uri)]);
   }, []);
 
@@ -169,7 +338,7 @@ export default function ReportTab({ jobId, employeeId }) {
         const id = generateId();
         await db.execute(
           `INSERT INTO daily_production_reports (id,job_id,wtc_id,report_date,submitted_by,tasks,materials_used,hours_regular,hours_ot,photos,notes,status,synced,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?)`,
-          [id, jobId, wtc?.id || '', today, employeeId, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, new Date().toISOString()]
+          [id, jobId, sowWtcId, today, employeeId, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, new Date().toISOString()]
         );
       }
       Vibration.vibrate([100, 50, 100]);
@@ -179,7 +348,7 @@ export default function ReportTab({ jobId, employeeId }) {
     } finally {
       setPrtSubmitting(false);
     }
-  }, [taskEntries, existingReport, jobId, employeeId, today, db, wtc]);
+  }, [taskEntries, existingReport, jobId, employeeId, today, db, sowWtcId]);
 
   const savePRTDraft = useCallback(async () => {
     const data = {
@@ -200,11 +369,11 @@ export default function ReportTab({ jobId, employeeId }) {
       const id = generateId();
       await db.execute(
         `INSERT INTO daily_production_reports (id,job_id,wtc_id,report_date,submitted_by,tasks,materials_used,hours_regular,hours_ot,photos,notes,status,synced,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?)`,
-        [id, jobId, wtc?.id || '', today, employeeId, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, new Date().toISOString()]
+      [id, jobId, sowWtcId, today, employeeId, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, new Date().toISOString()]
       );
     }
     Vibration.vibrate(50);
-  }, [taskEntries, existingReport, jobId, employeeId, today, db, wtc]);
+  }, [taskEntries, existingReport, jobId, employeeId, today, db, sowWtcId]);
 
   // ── Daily Log Submit (optimistic — save immediately, upload photos in background) ──
   const submitLogEntry = useCallback(async () => {
@@ -278,20 +447,31 @@ export default function ReportTab({ jobId, employeeId }) {
         {section === 'prt' && (
           <>
             <Text style={styles.sectionTitle}>PRODUCTION RATE TRACKER</Text>
-            <Text style={styles.sectionHint}>Enter your daily % for each task. Hit the target or beat it.</Text>
+            <Text style={styles.sectionHint}>
+              {prtDayLabel
+                ? `Enter today’s % for each task. Targets match SOW ${prtDayLabel}.`
+                : 'Enter your daily % for each task. Hit the target or beat it.'}
+            </Text>
 
             {prtSubmitted && !editing ? (
               <View style={styles.submittedCard}>
                 <View style={styles.sentBadge}><Text style={styles.sentBadgeText}>✓ SENT TO OFFICE</Text></View>
                 <Text style={styles.submittedTitle}>PRT SUBMITTED</Text>
                 <Text style={styles.submittedBody}>Today's production has been sent to the office.</Text>
-                {parseJSONArray(existingReport?.tasks, []).filter((t) => Number(t.pct_today) > 0).map((t, idx) => (
+                {parseJSONArray(existingReport?.tasks, []).filter((t) => Number(t.pct_today) > 0).map((t, idx) => {
+                  const rung = prtRung(t.pct_today, t.target_pct);
+                  return (
                   <View key={idx} style={styles.submittedTask}>
                     <Text style={styles.submittedTaskName}>{t.description}</Text>
+                    {rung ? (
+                      <View style={[styles.resultBadge, { backgroundColor: rung.badgeBg }]}>
+                        <Text style={[styles.resultText, { color: rung.badgeFg }]}>{rung.badge}</Text>
+                      </View>
+                    ) : null}
                     <View style={styles.submittedPctRow}>
                       <View style={styles.pctChip}>
                         <Text style={styles.pctChipLabel}>TODAY</Text>
-                        <Text style={[styles.pctChipValue, t.pct_today >= t.target_pct ? { color: C.teal } : { color: C.amber }]}>{t.pct_today}%</Text>
+                        <Text style={[styles.pctChipValue, { color: rung?.bar || C.textHead }]}>{t.pct_today}%</Text>
                       </View>
                       <View style={styles.pctChip}>
                         <Text style={styles.pctChipLabel}>TARGET</Text>
@@ -300,7 +480,8 @@ export default function ReportTab({ jobId, employeeId }) {
                     </View>
                     {t.notes ? <Text style={styles.submittedNotes}>{t.notes}</Text> : null}
                   </View>
-                ))}
+                  );
+                })}
                 <TouchableOpacity style={styles.editBtn} onPress={startEdit}>
                   <Text style={styles.editBtnText}>EDIT &amp; RESUBMIT</Text>
                 </TouchableOpacity>
@@ -308,7 +489,8 @@ export default function ReportTab({ jobId, employeeId }) {
             ) : (
               <>
                 {taskEntries.map((task, idx) => {
-                  const hit = task.pct_today >= task.target_pct;
+                  const rung = prtRung(task.pct_today, task.target_pct);
+                  const hit = rung?.badge === 'HIT TARGET';
                   return (
                     <View key={idx} style={styles.taskCard}>
                       <Text style={styles.taskName}>{task.description || `Task ${idx + 1}`}</Text>
@@ -331,27 +513,26 @@ export default function ReportTab({ jobId, employeeId }) {
                             maxLength={3}
                           />
                         </View>
-                        <View style={styles.compareBlock}>
-                          {task.pct_today > 0 && (
-                            <View style={[styles.resultBadge, hit ? styles.resultHit : styles.resultMiss]}>
-                              <Text style={styles.resultText}>{hit ? 'ON TRACK' : 'BEHIND'}</Text>
-                            </View>
-                          )}
-                        </View>
                       </View>
+
+                      {rung ? (
+                        <View style={[styles.resultBadge, { backgroundColor: rung.badgeBg }]}>
+                          <Text style={[styles.resultText, { color: rung.badgeFg }]}>{rung.badge}</Text>
+                        </View>
+                      ) : null}
 
                       {/* Progress bar */}
                       <View style={styles.progressTrack}>
                         <View style={[styles.progressTarget, { width: `${Math.min(task.target_pct, 100)}%` }]} />
-                        <View style={[styles.progressActual, hit ? styles.progressHit : styles.progressMiss, { width: `${Math.min(task.pct_today || 0, 100)}%` }]} />
+                        <View style={[styles.progressActual, { width: `${Math.min(task.pct_today || 0, 100)}%`, backgroundColor: rung?.bar || C.linenDeep }]} />
                       </View>
 
-                      {/* Notes — required */}
+                      {/* Notes — required; placeholder matches the urgency rung */}
                       <TextInput
                         style={styles.taskNoteInput}
                         value={task.notes}
                         onChangeText={(v) => updateTask(idx, 'notes', v)}
-                        placeholder="Note required — what happened today"
+                        placeholder={rung?.note || NOTE_DEFAULT}
                         placeholderTextColor={C.textFaint}
                         multiline
                       />
@@ -523,16 +704,12 @@ const styles = StyleSheet.create({
   compareTarget: { fontFamily: F.display, fontSize: 22, color: C.textMuted },
   pctInput: { backgroundColor: C.linenDeep, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, fontFamily: F.display, fontSize: 22, color: C.textHead, textAlign: 'center', width: 80 },
   pctInputHit: { borderWidth: 2, borderColor: C.teal },
-  resultBadge: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
-  resultHit: { backgroundColor: C.teal },
-  resultMiss: { backgroundColor: C.amber },
-  resultText: { fontFamily: F.display, fontSize: 10, color: C.dark, letterSpacing: 1 },
+  resultBadge: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 8, marginBottom: S.sm, alignSelf: 'stretch' },
+  resultText: { fontFamily: F.display, fontSize: 13, letterSpacing: 1, textAlign: 'center' },
   progressTrack: { height: 8, backgroundColor: C.linenDeep, borderRadius: 4, overflow: 'hidden', marginBottom: S.sm },
   progressTarget: { position: 'absolute', height: '100%', backgroundColor: 'rgba(136,124,110,0.4)', borderRadius: 4 },
   progressActual: { height: '100%', borderRadius: 4 },
-  progressHit: { backgroundColor: C.teal },
-  progressMiss: { backgroundColor: C.amber },
-  taskNoteInput: { backgroundColor: C.linenDeep, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontFamily: F.body, fontSize: 14, color: C.textBody, minHeight: 44 },
+  taskNoteInput: { backgroundColor: C.linenDeep, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontFamily: F.body, fontSize: 14, color: C.textBody, minHeight: 64 },
 
   actionRow: { flexDirection: 'row', gap: S.sm, marginTop: S.sm },
   stickyBar: { flexDirection: 'row', gap: S.sm, paddingHorizontal: S.md, paddingTop: S.sm, paddingBottom: S.md, backgroundColor: C.linenCard, borderTopWidth: 1, borderTopColor: C.borderStrong },

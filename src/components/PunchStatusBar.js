@@ -2,17 +2,19 @@
  * PunchStatusBar — persistent header showing current punch state + daily log alerts.
  * Visible on every screen so crew always knows where they stand.
  *
- * Alert logic (Hawthorne Effect — persistent, not dismissable):
+ * Alert logic (Hawthorne — persistent, not dismissable):
  *   - 15 min after clock in, no SOD → amber "SOD LOG NEEDED"
- *   - 4 hrs on site, no MOD → amber "MID DAY LOG DUE"
- *   - After clock out, no EOD → red "EOD LOG REQUIRED"
- *   - After clock out, no PRT → red "PRT NOT SUBMITTED"
+ *   - 4 hrs / noon, no MOD → amber "MID DAY LOG DUE"
+ *   - 6 hrs / 3pm, no EOD → red "EOD LOG REQUIRED"
+ *   - same window, no PRT → red "PRT NOT SUBMITTED"
+ * Clock-out is blocked until SOD, MOD, EOD, and PRT are in.
  */
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { useQuery } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
 import { tod } from '../lib/utils';
+import { DUTY_LOGS, PRT_DUTY, dutyState } from '../lib/dayDuty';
 
 const STATUS_CONFIG = {
   not_clocked_in: { label: 'NOT CLOCKED IN', color: C.amber,     bg: '#2a2010' },
@@ -66,29 +68,33 @@ export default function PunchStatusBar() {
     const clockOut = punchList.find(p => p.punch_type === 'clock_out');
     if (!clockIn) return result;
 
-    const clockInTime = new Date(clockIn.punch_time).getTime();
-    const msSinceClockIn = now.getTime() - clockInTime;
+    const clockInTime = clockIn.punch_time;
     const submittedTypes = new Set((logEntries || []).map(e => e.entry_type));
     const prtDone = prtReports && prtReports.length > 0;
 
-    // SOD: 15 min after clock in, no SOD
-    if (msSinceClockIn > 15 * 60 * 1000 && !submittedTypes.has('SOD')) {
-      result.push({ label: 'SOD LOG NEEDED', color: C.amber, bg: ALERT_AMBER });
+    for (const d of DUTY_LOGS) {
+      const state = dutyState({
+        done: submittedTypes.has(d.key),
+        clockInTime,
+        now,
+        dueAfterMs: d.dueAfterMs,
+        dueHour: d.dueHour,
+      });
+      if (state !== 'due') continue;
+      if (d.key === 'SOD') result.push({ label: 'SOD LOG NEEDED', color: C.amber, bg: ALERT_AMBER });
+      if (d.key === 'MOD') result.push({ label: 'MID DAY LOG DUE', color: C.amber, bg: ALERT_AMBER });
+      if (d.key === 'EOD') result.push({ label: 'EOD LOG REQUIRED', color: '#ef4444', bg: ALERT_RED });
     }
 
-    // MOD: 4 hours on site, no MOD
-    if (msSinceClockIn > 4 * 60 * 60 * 1000 && !submittedTypes.has('MOD')) {
-      result.push({ label: 'MID DAY LOG DUE', color: C.amber, bg: ALERT_AMBER });
-    }
-
-    // After clock out
-    if (clockOut) {
-      if (!submittedTypes.has('EOD')) {
-        result.push({ label: 'EOD LOG REQUIRED', color: '#ef4444', bg: ALERT_RED });
-      }
-      if (!prtDone) {
-        result.push({ label: 'PRT NOT SUBMITTED', color: '#ef4444', bg: ALERT_RED });
-      }
+    const prtState = dutyState({
+      done: prtDone,
+      clockInTime,
+      now,
+      dueAfterMs: PRT_DUTY.dueAfterMs,
+      dueHour: PRT_DUTY.dueHour,
+    });
+    if (prtState === 'due' || (clockOut && !prtDone)) {
+      result.push({ label: 'PRT NOT SUBMITTED', color: '#ef4444', bg: ALERT_RED });
     }
 
     return result;

@@ -24,6 +24,7 @@ import { C, F, S } from '../../lib/tokens';
 import { fmtTime, tod } from '../../lib/utils';
 import { getCurrentPosition, checkGeofence, DEMO_POSITIONS } from '../../lib/location';
 import { fetchWeather } from '../../lib/weather';
+import { missingClockOutDuties } from '../../lib/dayDuty';
 import LinenBackground from '../../components/LinenBackground';
 
 const LUNCH_DURATION_MS = 30 * 60 * 1000;
@@ -99,12 +100,16 @@ export default function TimeClockTab({ jobId, jobName, employeeId }) {
     [jobId, tod()]
   );
 
-  // PRT gate: today's production report must be submitted before clocking out.
+  // PRT + daily logs: clock-out waits until SOD, MOD, EOD, and today's PRT are in.
   const { data: prtRows } = useQuery(
     'SELECT status FROM daily_production_reports WHERE job_id = ? AND report_date = ? LIMIT 1',
     [jobId, tod()]
   );
   const prtSubmitted = ['submitted', 'approved'].includes(prtRows?.[0]?.status);
+  const { data: todayLogs } = useQuery(
+    `SELECT entry_type FROM daily_log_entries WHERE job_id = ? AND created_at >= ?`,
+    [jobId, tod() + 'T00:00:00']
+  );
 
   useEffect(() => {
     if (!todayPunches || todayPunches.length === 0) return;
@@ -227,8 +232,13 @@ export default function TimeClockTab({ jobId, jobName, employeeId }) {
       return;
     }
     if (currentStep.punch === 'clock_out') {
-      if (!prtSubmitted) {
-        Alert.alert('Submit your PRT first', "Fill out and submit today's production report before clocking out.");
+      const logTypes = new Set((todayLogs || []).map((e) => e.entry_type));
+      const missing = missingClockOutDuties({ logTypes, prtSubmitted });
+      if (missing.length > 0) {
+        Alert.alert(
+          'Finish the day first',
+          `Before clocking out: ${missing.join(', ')}.`,
+        );
         return;
       }
       setShowClockOutModal(true);
@@ -240,7 +250,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId }) {
     if (currentStep.punch === 'lunch_start') setLunchStart(new Date());
     Vibration.vibrate(100);
     advanceStep();
-  }, [currentStep, checkGPS, writePunch, advanceStep, prtSubmitted]);
+  }, [currentStep, checkGPS, writePunch, advanceStep, prtSubmitted, todayLogs]);
 
   // ── Confirm clock out ─────────────────────────────────
   const confirmClockOut = useCallback(async () => {
