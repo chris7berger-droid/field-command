@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
-import { parseJSON, fmtPct, fmtDayLabel } from '../../lib/utils';
+import { parseJSON, fmtPct, fmtDayLabel, tod, addDaysYmd } from '../../lib/utils';
 import { tripSeq, tripTitle } from '../../lib/trips';
 import LinenBackground from '../../components/LinenBackground';
 
@@ -36,6 +36,38 @@ function tripGroupKey(day) {
 
 export { tripTitle };
 
+function ymd(v) {
+  if (!v) return null;
+  const s = String(v).trim();
+  return s.length >= 10 ? s.slice(0, 10) : null;
+}
+
+// SOW days often have date: null; the calendar lives on job_mobilizations.
+// Fill empty day dates from the matching trip window (start + later days).
+function applyTripDates(taggedDays, trips) {
+  const list = (taggedDays || []).map((d) => ({ ...d }));
+  const undatedBySeq = new Map();
+  list.forEach((day, i) => {
+    if (ymd(day.date)) return;
+    const seq = tripSeq(day);
+    if (seq == null) return;
+    if (!undatedBySeq.has(seq)) undatedBySeq.set(seq, []);
+    undatedBySeq.get(seq).push(i);
+  });
+  for (const [seq, idxs] of undatedBySeq) {
+    const trip = (trips || []).find((t) => Number(t.seq) === seq);
+    const start = ymd(trip?.start_date);
+    if (!start) continue;
+    const end = ymd(trip.end_date) || start;
+    idxs.forEach((i, n) => {
+      let date = addDaysYmd(start, n);
+      if (date > end) date = end;
+      list[i].date = date;
+    });
+  }
+  return list;
+}
+
 // Merge per-WTC day arrays. Same calendar date + same trip collapse (F3).
 // Different trips on the same date stay distinct — that is the Schedule trips
 // contract Field must honor. taggedDays each carry a `work_type_name`.
@@ -44,7 +76,7 @@ export { tripTitle };
 export function mergeDaysByDate(taggedDays, trips) {
   const dated = [];
   const undated = [];
-  for (const day of taggedDays) {
+  for (const day of applyTripDates(taggedDays, trips)) {
     if (day && day.date) dated.push(day);
     else if (day) undated.push(day);
   }
@@ -159,7 +191,7 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
   );
 
   const { data: tripRows } = useQuery(
-    `SELECT seq, label FROM job_mobilizations
+    `SELECT seq, label, start_date, end_date FROM job_mobilizations
       WHERE job_id = ${LIVE_JOB_SQL}
       ORDER BY seq`,
     [jobId]
@@ -168,7 +200,7 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
   // Persistent per-material load-out confirmations. One row per material,
   // toggled via `checked`; keyed by the material's stable wtc_material_id.
   const { data: checkRows } = useQuery(
-    `SELECT id, wtc_material_id, checked FROM job_material_checks WHERE job_id = ?`,
+    `SELECT id, wtc_material_id, checked, check_date FROM job_material_checks WHERE job_id = ?`,
     [jobId]
   );
 
@@ -194,7 +226,23 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
     return { days: [], allTbd: false };
   }, [wtcRows, jobRow, tripRows]);
 
-  const [selectedDayIdx, setSelectedDayIdx] = useState(0);
+  const today = tod();
+  const todayIdx = useMemo(
+    () => days.findIndex((d) => {
+      if (d.date === today) return true;
+      const trip = (tripRows || []).find((t) => Number(t.seq) === Number(d.mobilization_seq));
+      const start = ymd(trip?.start_date);
+      if (!start) return false;
+      const end = ymd(trip.end_date) || start;
+      return start <= today && today <= end;
+    }),
+    [days, today, tripRows]
+  );
+  // Null = follow today (or Day 1 when no calendar day matches).
+  const [userDayIdx, setUserDayIdx] = useState(null);
+  const selectedDayIdx = userDayIdx != null
+    ? userDayIdx
+    : (todayIdx >= 0 ? todayIdx : 0);
   // Which material rows are expanded to show full specs (view state only).
   const [expandedMats, setExpandedMats] = useState(() => new Set());
   const currentDay = days[selectedDayIdx] || null;
@@ -212,24 +260,25 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
     return next;
   });
 
-  // Persist a load-out confirmation. Upsert-by-material: flip the existing row's
-  // `checked`, or insert one. Writes to the local PowerSync DB; connector syncs up.
-  const toggleCheck = async (mat, checkDate) => {
+  // Persist today's load-out. A check from another day must not look loaded
+  // this morning — the office still has the row; the phone starts the day empty.
+  const toggleCheck = async (mat) => {
     const matId = mat.wtc_material_id;
     if (!matId) return; // no stable id → cannot persist safely
     const existing = checkByMat.get(matId);
     const now = new Date().toISOString();
+    const checkedToday = !!(existing && existing.checked && existing.check_date === today);
     if (existing) {
       await db.execute(
-        `UPDATE job_material_checks SET checked=?, checked_by=?, checked_by_name=?, updated_at=? WHERE id=?`,
-        [existing.checked ? 0 : 1, employeeId || null, employeeName || null, now, existing.id]
+        `UPDATE job_material_checks SET checked=?, check_date=?, checked_by=?, checked_by_name=?, updated_at=? WHERE id=?`,
+        [checkedToday ? 0 : 1, today, employeeId || null, employeeName || null, now, existing.id]
       );
     } else {
       await db.execute(
         `INSERT INTO job_material_checks
            (id, job_id, wtc_material_id, check_date, material_name, checked, checked_by, checked_by_name, created_at, updated_at)
          VALUES (?,?,?,?,?,1,?,?,?,?)`,
-        [generateId(), jobId, matId, checkDate || null, mat.name || null, employeeId || null, employeeName || null, now, now]
+        [generateId(), jobId, matId, today, mat.name || null, employeeId || null, employeeName || null, now, now]
       );
     }
   };
@@ -260,10 +309,18 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
         </View>
       )}
 
-      {/* Day Selector */}
+      {/* Day Selector — TODAY jumps to the calendar day when one exists */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dayScroll} contentContainerStyle={styles.dayScrollContent}>
+        {todayIdx >= 0 && (
+          <TouchableOpacity
+            style={[styles.dayPill, selectedDayIdx === todayIdx && styles.dayPillActive]}
+            onPress={() => setUserDayIdx(todayIdx)}
+          >
+            <Text style={[styles.dayPillText, selectedDayIdx === todayIdx && styles.dayPillTextActive]}>TODAY</Text>
+          </TouchableOpacity>
+        )}
         {days.map((day, idx) => (
-          <TouchableOpacity key={day.key} style={[styles.dayPill, idx === selectedDayIdx && styles.dayPillActive]} onPress={() => setSelectedDayIdx(idx)}>
+          <TouchableOpacity key={day.key} style={[styles.dayPill, idx === selectedDayIdx && styles.dayPillActive]} onPress={() => setUserDayIdx(idx)}>
             <Text style={[styles.dayPillText, idx === selectedDayIdx && styles.dayPillTextActive]}>{day.label}</Text>
           </TouchableOpacity>
         ))}
@@ -298,7 +355,9 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
             </View>
           )}
 
-          <Text style={styles.sectionTitle}>TODAY'S WORK</Text>
+          <Text style={styles.sectionTitle}>
+            {currentDay.date === today ? "TODAY'S WORK" : 'WORK'}
+          </Text>
           {taskCount === 0 ? (
             <Text style={styles.noItems}>No tasks for this day</Text>
           ) : (
@@ -338,7 +397,7 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
                 {currentDay.materials.map((mat, idx) => {
                   const matKey = `${currentDay.key}:${mat.wtc_material_id || idx}`;
                   const checkRow = mat.wtc_material_id ? checkByMat.get(mat.wtc_material_id) : null;
-                  const checked = !!(checkRow && checkRow.checked);
+                  const checked = !!(checkRow && checkRow.checked && checkRow.check_date === today);
                   const expanded = expandedMats.has(matKey);
                   const qty = Number(mat.qty_planned) || 0;
                   // Full spec set — string values shown verbatim (mix_time etc. carry
@@ -356,7 +415,7 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
                       <View style={styles.matRow}>
                         <TouchableOpacity
                           style={[styles.checkbox, checked && styles.checkboxOn]}
-                          onPress={() => toggleCheck(mat, currentDay.date)}
+                          onPress={() => toggleCheck(mat)}
                           hitSlop={{ top: 12, bottom: 12, left: 12, right: 6 }}
                           activeOpacity={0.7}
                         >

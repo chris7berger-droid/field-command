@@ -166,7 +166,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation }) {
     [jobId]
   );
   const { data: tripRows } = useQuery(
-    `SELECT seq, label FROM job_mobilizations
+    `SELECT seq, label, start_date, end_date FROM job_mobilizations
       WHERE job_id = ${LIVE_JOB_SQL}
       ORDER BY seq`,
     [jobId]
