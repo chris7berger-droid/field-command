@@ -24,4 +24,4 @@ bucket_definitions:
       - SELECT * FROM daily_production_reports
       - SELECT * FROM daily_log_entries
       - SELECT * FROM job_material_checks
-      - SELECT * FROM job_mobilizations
+      - SELECT id, job_id, seq, label, start_date, end_date FROM job_mobilizations
