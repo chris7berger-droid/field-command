@@ -14,7 +14,7 @@ import {
 } from '../lib/trips';
 import {
   DUTY_LOGS, PRT_DUTY, dutyState, pickSowDaysForPrt,
-  openClockInPunch, punchDay, reportClockGate, reportClockCopy,
+  openClockInPunch, punchDay, punchLookbackDate, reportClockGate, reportClockCopy,
 } from '../lib/dayDuty';
 import { mergeDaysByDate } from './tabs/TasksTab';
 import LinenBackground from '../components/LinenBackground';
@@ -87,9 +87,12 @@ export default function HomeScreen({ navigation, userName }) {
   const dayOfWeek = todayDate.toLocaleDateString('en-US', { weekday: 'long' });
   const dateStr = todayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
+  const lookback = punchLookbackDate(today);
+  const punchFrom = lookback < monday ? lookback : monday;
+
   const { data: weekPunches } = useQuery(
     `SELECT * FROM time_punches WHERE punch_date >= ? AND punch_date <= ? ORDER BY punch_date ASC, punch_time ASC`,
-    [monday, sunday]
+    [punchFrom, sunday]
   );
 
   const { data: jobs } = useQuery(
@@ -159,7 +162,7 @@ export default function HomeScreen({ navigation, userName }) {
   const { data: weekReports } = useQuery(
     `SELECT id, job_id, report_date, status, tasks FROM daily_production_reports
       WHERE report_date >= ? AND report_date <= ?`,
-    [monday, sunday]
+    [punchFrom, sunday]
   );
 
   const { data: priorPrtRows } = useQuery(
@@ -168,11 +171,14 @@ export default function HomeScreen({ navigation, userName }) {
     [today]
   );
 
-  const weekStartIso = useMemo(() => new Date(monday + 'T00:00:00').toISOString(), [monday]);
+  const logFromIso = useMemo(
+    () => new Date((lookback < monday ? lookback : monday) + 'T00:00:00').toISOString(),
+    [lookback, monday]
+  );
   const { data: weekLogs } = useQuery(
     `SELECT job_id, entry_type, created_at FROM daily_log_entries
       WHERE created_at >= ?`,
-    [weekStartIso]
+    [logFromIso]
   );
 
   const wtcsByJob = useMemo(() => {
@@ -337,7 +343,18 @@ export default function HomeScreen({ navigation, userName }) {
           const trip = tripLine(tripsByJob.get(id), today, monday, sunday);
           const priorCount = priorCountByJob.get(id) || 0;
           const dutyDate = String(job.id) === onJobId ? workDate : today;
-          const types = logsByJobDate.get(`${id}|${dutyDate}`) || new Set();
+          let types = logsByJobDate.get(`${id}|${dutyDate}`) || new Set();
+          if (String(job.id) === onJobId && openPunch?.punch_time) {
+            const start = new Date(openPunch.punch_time).getTime();
+            types = new Set();
+            for (const e of (weekLogs || [])) {
+              if (String(e.job_id) !== id || !e.created_at) continue;
+              const when = new Date(e.created_at);
+              if (!Number.isNaN(when.getTime()) && when.getTime() >= start) {
+                types.add(e.entry_type);
+              }
+            }
+          }
           const report = reportsByJobDate.get(`${id}|${dutyDate}`);
           const prtDone = report && (report.status === 'submitted' || report.status === 'approved');
           const clockIn = String(job.id) === onJobId ? openPunch.punch_time : null;

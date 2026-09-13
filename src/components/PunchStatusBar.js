@@ -13,7 +13,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { View, Text, StyleSheet, Animated, Easing, TouchableOpacity, Alert } from 'react-native';
 import { useQuery, usePowerSync } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
-import { tod, localYmd } from '../lib/utils';
+import { tod } from '../lib/utils';
 import { getCurrentPosition } from '../lib/location';
 import { fetchWeather } from '../lib/weather';
 import {
@@ -89,11 +89,12 @@ export default function PunchStatusBar() {
 
     const clockIn = openPunch;
     const jobId = String(clockIn.job_id);
+    const startMs = new Date(clockIn.punch_time).getTime();
     const types = new Set();
     for (const e of (logEntries || [])) {
       if (String(e.job_id) !== jobId || !e.created_at) continue;
       const when = new Date(e.created_at);
-      if (Number.isNaN(when.getTime()) || localYmd(when) !== workDate) continue;
+      if (Number.isNaN(when.getTime()) || when.getTime() < startMs) continue;
       types.add(e.entry_type);
     }
     const prtDone = (prtReports || []).some(
@@ -146,6 +147,7 @@ export default function PunchStatusBar() {
       lat = pos.latitude;
       lng = pos.longitude;
       gpsOverride = 0;
+      onSite = 1;
       weather = await fetchWeather(lat, lng);
     } catch {
       // Still clock out. They're fixing a missed punch, not starting a shift.
