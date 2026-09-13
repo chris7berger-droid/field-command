@@ -46,15 +46,19 @@ function ymd(v) {
 // Fill empty day dates from the matching trip window (start + later days).
 function applyTripDates(taggedDays, trips) {
   const list = (taggedDays || []).map((d) => ({ ...d }));
-  const undatedBySeq = new Map();
+  // Offset per work-type + trip, not the flattened list — two WTCs on the
+  // same trip must share Day 1's date so F3 can merge them.
+  const undatedByGroup = new Map();
   list.forEach((day, i) => {
     if (ymd(day.date)) return;
     const seq = tripSeq(day);
     if (seq == null) return;
-    if (!undatedBySeq.has(seq)) undatedBySeq.set(seq, []);
-    undatedBySeq.get(seq).push(i);
+    const key = `${day.work_type_name || ''}::${seq}`;
+    if (!undatedByGroup.has(key)) undatedByGroup.set(key, []);
+    undatedByGroup.get(key).push(i);
   });
-  for (const [seq, idxs] of undatedBySeq) {
+  for (const idxs of undatedByGroup.values()) {
+    const seq = tripSeq(list[idxs[0]]);
     const trip = (trips || []).find((t) => Number(t.seq) === seq);
     const start = ymd(trip?.start_date);
     if (!start) continue;
@@ -228,15 +232,8 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
 
   const today = tod();
   const todayIdx = useMemo(
-    () => days.findIndex((d) => {
-      if (d.date === today) return true;
-      const trip = (tripRows || []).find((t) => Number(t.seq) === Number(d.mobilization_seq));
-      const start = ymd(trip?.start_date);
-      if (!start) return false;
-      const end = ymd(trip.end_date) || start;
-      return start <= today && today <= end;
-    }),
-    [days, today, tripRows]
+    () => days.findIndex((d) => d.date === today),
+    [days, today]
   );
   // Null = follow today (or Day 1 when no calendar day matches).
   const [userDayIdx, setUserDayIdx] = useState(null);
