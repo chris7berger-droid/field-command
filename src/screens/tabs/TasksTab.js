@@ -19,6 +19,7 @@ import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
 import { parseJSON, fmtPct, fmtDayLabel, tod, addDaysYmd } from '../../lib/utils';
 import { tripSeq, tripTitle } from '../../lib/trips';
+import { uniqueNames } from '../../lib/crew';
 import LinenBackground from '../../components/LinenBackground';
 
 // Local uuid (PowerSync row ids are client-generated v4 uuids).
@@ -40,6 +41,33 @@ function ymd(v) {
   if (!v) return null;
   const s = String(v).trim();
   return s.length >= 10 ? s.slice(0, 10) : null;
+}
+
+function fmtHrs(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
+
+// Field SOW day boxes — crew_count + hours_planned. Not WTC bid labor / OT.
+function soldLaborFromSowDays(w) {
+  const days = parseJSON(w.field_sow, []);
+  let hours = 0;
+  let crew = 0;
+  for (const d of days) {
+    hours += Number(d.hours_planned) || 0;
+    crew = Math.max(crew, Number(d.crew_count) || 0);
+  }
+  const parts = [];
+  if (hours > 0) parts.push(`${fmtHrs(hours)} HRS`);
+  if (crew > 0) parts.push(`${crew} CREW`);
+  const each = hours > 0 && crew > 1 ? hours / crew : null;
+  return {
+    key: w.proposal_wtc_id || w.work_type_name || 'labor',
+    name: (w.work_type_name || '').trim() || 'WORK',
+    parts,
+    each: fmtHrs(each),
+  };
 }
 
 // SOW days often have date: null; the calendar lives on job_mobilizations.
@@ -180,7 +208,7 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
   // Primary: canonical dated SOW from job_wtcs. job_wtcs.job_id (int8) equals the
   // Field-local jobs.id (jobs syncs `job_id AS id`), so resolve it via call_log_id.
   const { data: wtcRows, isLoading: wtcLoading } = useQuery(
-    `SELECT field_sow, work_type_name FROM job_wtcs
+    `SELECT field_sow, work_type_name, proposal_wtc_id FROM job_wtcs
       WHERE job_id = ${LIVE_JOB_SQL}
       ORDER BY position`,
     [jobId]
@@ -188,9 +216,25 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
 
   // Legacy fallback: jobs.field_sow mirror for pre-vertical jobs with no job_wtcs.
   const { data: jobRows, isLoading: jobsLoading } = useQuery(
-    `SELECT field_sow, size, size_unit FROM jobs
+    `SELECT field_sow, size, size_unit, lead FROM jobs
       WHERE call_log_id = ? AND ${LIVE_JOB_FILTER}
       ORDER BY id DESC LIMIT 1`,
+    [jobId]
+  );
+
+  // Schedule crew lives on assignments (job_id = jobs.id). job_crew is leftover.
+  const { data: assignRows } = useQuery(
+    `SELECT a.crew_name AS crew_name
+       FROM assignments a
+      WHERE a.job_id = ${LIVE_JOB_SQL}`,
+    [jobId]
+  );
+
+  const { data: crewRows } = useQuery(
+    `SELECT jc.role AS role, tm.name AS name
+       FROM job_crew jc
+       LEFT JOIN team_members tm ON tm.id = jc.team_member_id
+      WHERE jc.job_id = ?`,
     [jobId]
   );
 
@@ -210,6 +254,38 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
 
   const isLoading = wtcLoading || jobsLoading;
   const jobRow = jobRows?.[0] || null;
+
+  const soldLabor = useMemo(
+    () => (wtcRows || []).map(soldLaborFromSowDays).filter((row) => row.parts.length > 0),
+    [wtcRows]
+  );
+
+  const crewRoster = useMemo(() => {
+    const lead = (jobRow?.lead || '').trim();
+    const fromAssign = uniqueNames(assignRows, 'crew_name');
+    if (fromAssign.length > 0) {
+      return {
+        lead: lead || null,
+        names: lead
+          ? fromAssign.filter((n) => n.toLowerCase() !== lead.toLowerCase())
+          : fromAssign,
+      };
+    }
+    const names = [];
+    let crewLead = lead;
+    for (const r of (crewRows || [])) {
+      const name = (r.name || '').trim();
+      if (!name) continue;
+      const role = String(r.role || '').toLowerCase();
+      if (!crewLead && (role === 'lead' || role === 'job lead')) {
+        crewLead = name;
+        continue;
+      }
+      if (crewLead && name.toLowerCase() === crewLead.toLowerCase()) continue;
+      if (!names.some((n) => n.toLowerCase() === name.toLowerCase())) names.push(name);
+    }
+    return { lead: crewLead || null, names };
+  }, [jobRow, assignRows, crewRows]);
 
   const { days, allTbd } = useMemo(() => {
     // Primary: gather every WTC's days, tagged with its work type.
@@ -300,6 +376,33 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
 
   return (
     <LinenBackground><ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={styles.content}>
+      {soldLabor.length > 0 && (
+        <View style={styles.laborCard}>
+          <Text style={styles.laborKicker}>SOW LABOR</Text>
+          {soldLabor.map((row) => (
+            <View key={row.key} style={styles.laborRow}>
+              <Text style={styles.laborTrade}>{row.name.toUpperCase()}</Text>
+              <Text style={styles.laborLine}>{row.parts.join('   ·   ')}</Text>
+              {row.each ? <Text style={styles.laborEach}>{row.each} HRS EACH</Text> : null}
+            </View>
+          ))}
+        </View>
+      )}
+
+      <View style={styles.crewCard}>
+        <Text style={styles.crewKicker}>CREW</Text>
+        {crewRoster.lead ? (
+          <Text style={styles.crewLead}>LEAD  {crewRoster.lead}</Text>
+        ) : (
+          <Text style={styles.crewEmpty}>Lead not assigned</Text>
+        )}
+        {crewRoster.names.length > 0 ? (
+          <Text style={styles.crewNames}>{crewRoster.names.join('  ·  ')}</Text>
+        ) : (
+          <Text style={styles.crewEmpty}>Crew not assigned</Text>
+        )}
+      </View>
+
       {allTbd && (
         <View style={styles.tbdBanner}>
           <Text style={styles.tbdBannerText}>DATES TBD — schedule hasn't assigned calendar dates yet</Text>
@@ -489,6 +592,20 @@ const styles = StyleSheet.create({
   noItems: { fontFamily: F.body, fontSize: 14, color: C.textFaint, fontStyle: 'italic' },
   tbdBanner: { backgroundColor: C.dark, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8, marginBottom: S.md },
   tbdBannerText: { fontFamily: F.displayMed, fontSize: 12, color: C.teal, letterSpacing: 1 },
+  laborCard: { backgroundColor: C.dark, borderRadius: 10, padding: S.md, marginBottom: S.sm },
+  laborKicker: { fontFamily: F.display, fontSize: 11, color: C.textFaint, letterSpacing: 2, marginBottom: 8 },
+  laborRow: { marginBottom: 8 },
+  laborTrade: { fontFamily: F.display, fontSize: 14, color: C.teal, letterSpacing: 1, marginBottom: 2 },
+  laborLine: { fontFamily: F.displayMed, fontSize: 13, color: C.teal, letterSpacing: 1 },
+  laborEach: { fontFamily: F.bodyMed, fontSize: 12, color: C.textFaint, marginTop: 2, letterSpacing: 0.5 },
+  crewCard: {
+    backgroundColor: C.linenCard, borderRadius: 10, padding: S.md, marginBottom: S.md,
+    borderWidth: 1, borderColor: C.borderStrong,
+  },
+  crewKicker: { fontFamily: F.display, fontSize: 11, color: C.textMuted, letterSpacing: 2, marginBottom: 6 },
+  crewLead: { fontFamily: F.display, fontSize: 15, color: C.textHead, letterSpacing: 1, textTransform: 'uppercase' },
+  crewNames: { fontFamily: F.bodyMed, fontSize: 14, color: C.textBody, marginTop: 4 },
+  crewEmpty: { fontFamily: F.body, fontSize: 13, color: C.textFaint, fontStyle: 'italic', marginTop: 2 },
   wtTag: { fontFamily: F.display, fontSize: 10, color: C.textMuted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: S.sm },
   taskCard: { backgroundColor: C.linenCard, borderRadius: 10, padding: S.md, borderWidth: 1, borderColor: C.borderStrong, marginBottom: S.sm },
   taskTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: S.sm },

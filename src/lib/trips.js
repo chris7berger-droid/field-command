@@ -139,6 +139,13 @@ export function collectSowDates(wtcRows) {
   return map;
 }
 
+function hasWorkDates({ trips, sowDates, scheduledStart, scheduledEnd }) {
+  if (scheduledStart || scheduledEnd) return true;
+  if ((trips || []).some((t) => t.start_date || t.end_date)) return true;
+  if ((sowDates || []).some(Boolean)) return true;
+  return false;
+}
+
 // Crew-Home "active this week": trip window, Field SOW day, or live job
 // scheduled span overlaps Mon–Sun. Undated jobs stay off Home (use VIEW ALL).
 export function isActiveThisWeek(
@@ -154,4 +161,11 @@ export function isActiveThisWeek(
     if (d && d >= weekStart && d <= weekEnd) return true;
   }
   return false;
+}
+
+// VIEW ALL: this week's jobs, plus undated live jobs so crew can punch in
+// when the office has not put the job on Home yet.
+export function isListedThisWeek(args, weekStart, weekEnd) {
+  if (isActiveThisWeek(args, weekStart, weekEnd)) return true;
+  return !hasWorkDates(args);
 }

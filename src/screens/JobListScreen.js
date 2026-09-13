@@ -1,6 +1,6 @@
 /**
- * Job List Screen — Native Only
- * Shows mobilized jobs assigned to the current crew member.
+ * Job List — this week's jobs, plus undated live jobs so crew can punch
+ * in when the office has not put the job on Home yet.
  */
 import React, { useMemo } from 'react';
 import {
@@ -12,12 +12,25 @@ import {
 } from 'react-native';
 import { useQuery, useStatus } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
-import { tod } from '../lib/utils';
-import { LIVE_JOB_FILTER, jobNumber, tripLine, tripsByCallLog } from '../lib/trips';
+import { tod, addDaysYmd } from '../lib/utils';
+import {
+  LIVE_JOB_FILTER, jobNumber, tripLine, tripsByCallLog,
+  collectSowDates, isListedThisWeek,
+} from '../lib/trips';
 import LinenBackground from '../components/LinenBackground';
+
+function weekMonSun() {
+  const today = tod();
+  const [y, m, d] = today.split('-').map(Number);
+  const day = new Date(y, m - 1, d).getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  const monday = addDaysYmd(today, offset);
+  return { monday, sunday: addDaysYmd(monday, 6) };
+}
 
 export default function JobListScreen({ navigation, user }) {
   const status = useStatus();
+  const { monday, sunday } = weekMonSun();
   const { data: jobs, isLoading } = useQuery(
     `SELECT * FROM call_log WHERE stage IN ('Scheduled', 'In Progress', 'Parked', 'mobilized', 'in_progress') ORDER BY date ASC`
   );
@@ -37,11 +50,45 @@ export default function JobListScreen({ navigation, user }) {
       WHERE ${LIVE_JOB_FILTER}`
   );
 
+  const { data: liveJobRows } = useQuery(
+    `SELECT j.call_log_id AS call_log_id,
+            j.scheduled_start, j.scheduled_end, j.start_date, j.end_date
+       FROM jobs j
+      WHERE ${LIVE_JOB_FILTER}`
+  );
+
   const today = tod();
   const tripsByJob = useMemo(
     () => tripsByCallLog(mobRows, wtcTripRows),
     [mobRows, wtcTripRows]
   );
+  const sowDatesByJob = useMemo(
+    () => collectSowDates(wtcTripRows),
+    [wtcTripRows]
+  );
+  const listedJobs = useMemo(() => {
+    const liveByCl = new Map();
+    for (const row of (liveJobRows || [])) {
+      const id = String(row.call_log_id);
+      if (!liveByCl.has(id)) liveByCl.set(id, []);
+      liveByCl.get(id).push(row);
+    }
+    return (jobs || []).filter((job) => {
+      const id = String(job.id);
+      const trips = tripsByJob.get(id);
+      const sowDates = sowDatesByJob.get(id);
+      const lives = liveByCl.get(id) || [];
+      if (lives.length === 0) {
+        return isListedThisWeek({ trips, sowDates }, monday, sunday);
+      }
+      return lives.some((row) => isListedThisWeek({
+        trips,
+        sowDates,
+        scheduledStart: row.scheduled_start || row.start_date,
+        scheduledEnd: row.scheduled_end || row.end_date,
+      }, monday, sunday));
+    });
+  }, [jobs, liveJobRows, tripsByJob, sowDatesByJob, monday, sunday]);
 
   return (
     <LinenBackground>
@@ -67,18 +114,18 @@ export default function JobListScreen({ navigation, user }) {
         <View style={styles.center}>
           <Text style={styles.loadingText}>Loading jobs...</Text>
         </View>
-      ) : !jobs || jobs.length === 0 ? (
+      ) : listedJobs.length === 0 ? (
         <View style={styles.center}>
-          <Text style={styles.emptyText}>No mobilized jobs</Text>
+          <Text style={styles.emptyText}>No jobs this week</Text>
         </View>
       ) : (
         <FlatList
-          data={jobs}
+          data={listedJobs}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
           renderItem={({ item }) => {
             const num = jobNumber(item);
-            const trip = tripLine(tripsByJob.get(String(item.id)), today);
+            const trip = tripLine(tripsByJob.get(String(item.id)), today, monday, sunday);
             return (
             <TouchableOpacity
               style={styles.card}

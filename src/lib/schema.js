@@ -7,6 +7,7 @@
  *   - team_members    — crew roster
  *   - job_crew        — crew-to-job assignments (drives per-user sync filtering)
  *   - job_mobilizations — Schedule trips (seq + label); Field reads titles only
+ *   - assignments     — Schedule crew days (crew_name); Field reads names only
  *
  * Read-write tables (written locally, synced up to Supabase):
  *   - time_punches          — clock in/out, lunch, drive time
@@ -278,6 +279,18 @@ const daily_log_entries = new Table(
   { indexes: { by_job_date: ['job_id', 'created_at'] } }
 );
 
+// assignments — Schedule crew days. Read-only. crew_name is the office
+// allocation. job_id is jobs.job_id (Field jobs.id).
+const assignments = new Table(
+  {
+    job_id:             column.integer,
+    crew_name:          column.text,
+    date:               column.text,
+    mobilization_id:    column.text,
+  },
+  { indexes: { by_job: ['job_id'] } }
+);
+
 // job_mobilizations — Schedule trips. Read-only. seq is the wire key stamped
 // onto Field SOW days as mobilization_seq; label is the crew-facing trip name.
 const job_mobilizations = new Table(
@@ -323,6 +336,7 @@ export const AppSchema = new Schema({
   jobs,
   job_wtcs,
   job_mobilizations,
+  assignments,
   time_punches,
   daily_production_reports,
   daily_log_entries,

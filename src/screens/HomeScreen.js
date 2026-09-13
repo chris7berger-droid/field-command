@@ -12,6 +12,7 @@ import {
   LIVE_JOB_FILTER, jobNumber, tripLine, tripsByCallLog,
   collectSowDates, isActiveThisWeek,
 } from '../lib/trips';
+import { crewByCallLog, crewLine } from '../lib/crew';
 import {
   DUTY_LOGS, PRT_DUTY, dutyState, pickSowDaysForPrt,
   openClockInPunch, punchDay, punchLookbackDate, reportClockGate, reportClockCopy,
@@ -32,6 +33,7 @@ function getSunday(monday) {
 }
 
 const DAY_LABELS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+const WEEK_DUTY_KEYS = [...DUTY_LOGS.map((d) => d.short), PRT_DUTY.short];
 
 function getWeekDates(monday) {
   return Array.from({ length: 7 }, (_, i) => addDaysYmd(monday, i));
@@ -48,15 +50,10 @@ function sowLineForJob(wtcRows, trips, today, priorPrtCount) {
   const { days } = mergeDaysByDate(tagged, trips);
   const prtDays = pickSowDaysForPrt(days, today, priorPrtCount);
   if (prtDays.length === 0) return null;
-  const day = prtDays[0];
-  const idx = Math.max(1, days.indexOf(day) + 1);
   const tasks = prtDays.flatMap((d) => (d.tasks || []).filter((t) => (t.description || '').trim()));
   const names = [...new Set(tasks.map((t) => t.description.trim()))].join(' · ');
   const target = tasks.length === 1 ? Number(tasks[0].pct_complete) || null : null;
   return {
-    label: day.label || day.day_label || `Day ${idx}`,
-    idx,
-    total: days.length,
     names: names || null,
     target,
   };
@@ -116,8 +113,15 @@ export default function HomeScreen({ navigation, userName }) {
 
   const { data: liveJobRows } = useQuery(
     `SELECT j.call_log_id AS call_log_id,
-            j.scheduled_start, j.scheduled_end, j.start_date, j.end_date
+            j.scheduled_start, j.scheduled_end, j.start_date, j.end_date, j.lead
        FROM jobs j
+      WHERE ${LIVE_JOB_FILTER}`
+  );
+
+  const { data: assignRows } = useQuery(
+    `SELECT j.call_log_id AS call_log_id, a.crew_name AS crew_name
+       FROM assignments a
+       INNER JOIN jobs j ON j.id = a.job_id
       WHERE ${LIVE_JOB_FILTER}`
   );
 
@@ -130,6 +134,19 @@ export default function HomeScreen({ navigation, userName }) {
     () => collectSowDates(wtcTripRows),
     [wtcTripRows]
   );
+  const crewAssignByJob = useMemo(
+    () => crewByCallLog(assignRows),
+    [assignRows]
+  );
+  const leadByJob = useMemo(() => {
+    const m = new Map();
+    for (const row of (liveJobRows || [])) {
+      const id = String(row.call_log_id);
+      const lead = (row.lead || '').trim();
+      if (lead && !m.has(id)) m.set(id, lead);
+    }
+    return m;
+  }, [liveJobRows]);
 
   const weekJobs = useMemo(() => {
     const liveByCl = new Map();
@@ -265,6 +282,10 @@ export default function HomeScreen({ navigation, userName }) {
     };
   }), [weekDates, today, weekLogs, weekReports]);
 
+  const goMenu = (job) => {
+    navigation.navigate('JobMenu', { jobId: job.id, jobName: job.job_name });
+  };
+
   const goClock = (job) => {
     navigation.navigate('JobDetail', {
       jobId: job.id,
@@ -310,28 +331,41 @@ export default function HomeScreen({ navigation, userName }) {
 
         <View style={styles.weekCard}>
           <Text style={styles.weekCardTitle}>THIS WEEK</Text>
-          <View style={styles.weekStrip}>
-            {weekStrip.map((col, i) => (
-              <View key={col.date} style={styles.weekCol}>
-                <View style={styles.weekDots}>
-                  {col.lights.map((l) => (
-                    <View
-                      key={l.key}
-                      style={[
-                        styles.weekDot,
-                        l.on && (l.key === 'PRT' && l.hit === false ? styles.weekDotShort : styles.weekDotOn),
-                        col.isFuture && styles.weekDotFuture,
-                      ]}
-                    />
-                  ))}
+          <View style={styles.weekGrid}>
+            {WEEK_DUTY_KEYS.map((key, row) => (
+              <View key={key} style={[styles.weekRow, styles.weekDutyRow]}>
+                <Text style={styles.weekKeyLabel}>{key}</Text>
+                <View style={styles.weekRowDots}>
+                  {weekStrip.map((col) => {
+                    const l = col.lights[row];
+                    return (
+                      <View key={col.date} style={styles.weekDotCell}>
+                        <View
+                          style={[
+                            styles.weekDot,
+                            l.on && (l.key === 'PRT' && l.hit === false ? styles.weekDotShort : styles.weekDotOn),
+                            col.isFuture && styles.weekDotFuture,
+                          ]}
+                        />
+                      </View>
+                    );
+                  })}
                 </View>
-                <Text style={[styles.weekColLabel, col.isToday && styles.weekColLabelToday]}>
-                  {DAY_LABELS[i]}
-                </Text>
               </View>
             ))}
+            <View style={[styles.weekRow, styles.weekDayRow]}>
+              <View style={styles.weekKeySpacer} />
+              <View style={styles.weekRowDots}>
+                {weekStrip.map((col, i) => (
+                  <View key={col.date} style={styles.weekDotCell}>
+                    <Text style={[styles.weekColLabel, col.isToday && styles.weekColLabelToday]}>
+                      {DAY_LABELS[i]}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </View>
           </View>
-          <Text style={styles.weekLegend}>SOD · MOD · EOD · PRT</Text>
         </View>
 
         <Text style={styles.sectionTitle}>TODAY</Text>
@@ -341,6 +375,7 @@ export default function HomeScreen({ navigation, userName }) {
           const id = String(job.id);
           const num = jobNumber(job);
           const trip = tripLine(tripsByJob.get(id), today, monday, sunday);
+          const crew = crewLine(crewAssignByJob.get(id), leadByJob.get(id));
           const priorCount = priorCountByJob.get(id) || 0;
           const dutyDate = String(job.id) === onJobId ? workDate : today;
           let types = logsByJobDate.get(`${id}|${dutyDate}`) || new Set();
@@ -391,10 +426,7 @@ export default function HomeScreen({ navigation, userName }) {
 
           return (
             <View key={job.id} style={[styles.todayCard, allDone && styles.todayCardDone, isThisJob && styles.todayCardOn]}>
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={() => navigation.navigate('JobMenu', { jobId: job.id, jobName: job.job_name })}
-              >
+              <TouchableOpacity activeOpacity={0.7} onPress={() => goMenu(job)}>
                 {isThisJob ? (
                   <View style={styles.thisJobPill}>
                     <Text style={styles.thisJobText}>THIS JOB</Text>
@@ -403,13 +435,21 @@ export default function HomeScreen({ navigation, userName }) {
                 {num ? <Text style={styles.todayJobNum}>{num}</Text> : null}
                 <Text style={styles.todayJobName} numberOfLines={2}>{job.job_name}</Text>
                 {trip ? <Text style={styles.todayTrip}>{trip}</Text> : null}
-                {sow ? (
+                {crew ? <Text style={styles.todayCrew}>{crew}</Text> : null}
+                {sow?.names ? (
                   <Text style={styles.todaySow}>
-                    {sow.label.toUpperCase()} OF {sow.total}
-                    {sow.names ? `  ·  ${sow.names}` : ''}
+                    {sow.names}
                     {sow.target != null ? `  ·  TARGET ${sow.target}%` : ''}
                   </Text>
                 ) : null}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.openJobBtn}
+                activeOpacity={0.7}
+                onPress={() => goMenu(job)}
+              >
+                <Text style={styles.openJobText}>OPEN JOB</Text>
               </TouchableOpacity>
 
               <View style={styles.dutyList}>
@@ -486,16 +526,27 @@ const styles = StyleSheet.create({
 
   weekCard: { backgroundColor: C.dark, borderRadius: 12, padding: S.md, marginBottom: S.lg },
   weekCardTitle: { fontFamily: F.display, fontSize: 12, color: C.textFaint, letterSpacing: 3, marginBottom: S.sm, textAlign: 'center' },
-  weekStrip: { flexDirection: 'row', justifyContent: 'space-between' },
-  weekCol: { flex: 1, alignItems: 'center', gap: 6 },
-  weekDots: { gap: 4, alignItems: 'center' },
+  weekGrid: { gap: 0 },
+  weekRow: { flexDirection: 'row', alignItems: 'center' },
+  weekDutyRow: {
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  weekDayRow: { paddingTop: 6 },
+  weekKeyLabel: {
+    width: 34, fontFamily: F.display, fontSize: 10, color: C.textFaint,
+    letterSpacing: 1, lineHeight: 12,
+  },
+  weekKeySpacer: { width: 34 },
+  weekRowDots: { flex: 1, flexDirection: 'row' },
+  weekDotCell: { flex: 1, alignItems: 'center' },
   weekDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.12)' },
   weekDotOn: { backgroundColor: C.teal },
   weekDotShort: { backgroundColor: C.amber },
   weekDotFuture: { opacity: 0.35 },
-  weekColLabel: { fontFamily: F.display, fontSize: 10, color: C.textFaint, letterSpacing: 1 },
+  weekColLabel: { fontFamily: F.display, fontSize: 10, color: C.textFaint, letterSpacing: 1, marginTop: 2, textAlign: 'center' },
   weekColLabelToday: { color: C.teal },
-  weekLegend: { fontFamily: F.display, fontSize: 9, color: C.textFaint, letterSpacing: 1.5, textAlign: 'center', marginTop: S.sm },
 
   sectionTitle: { fontFamily: F.display, fontSize: 13, color: C.textMuted, letterSpacing: 2, marginBottom: S.sm },
 
@@ -510,7 +561,13 @@ const styles = StyleSheet.create({
   todayJobNum: { fontFamily: F.display, fontSize: 28, color: C.textHead, letterSpacing: 1 },
   todayJobName: { fontFamily: F.display, fontSize: 15, color: C.textBody, textTransform: 'uppercase', letterSpacing: 0.5 },
   todayTrip: { fontFamily: F.displayMed, fontSize: 13, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2 },
+  todayCrew: { fontFamily: F.bodyMed, fontSize: 13, color: C.textBody, marginTop: 4 },
   todaySow: { fontFamily: F.bodyMed, fontSize: 13, color: C.textMuted, marginTop: 6, marginBottom: S.sm },
+  openJobBtn: {
+    backgroundColor: C.dark, borderRadius: 8, paddingVertical: 14,
+    alignItems: 'center', marginTop: S.sm, marginBottom: 2,
+  },
+  openJobText: { fontFamily: F.display, fontSize: 16, color: C.teal, letterSpacing: 2 },
 
   dutyList: { gap: 6, marginTop: S.sm },
   dutyRow: {
