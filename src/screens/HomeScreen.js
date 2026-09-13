@@ -289,7 +289,7 @@ export default function HomeScreen({ navigation, userName }) {
             key={job.id}
             style={styles.jobCard}
             activeOpacity={0.7}
-            onPress={() => navigation.navigate('JobDetail', { jobId: job.id, jobName: job.job_name })}
+            onPress={() => navigation.navigate('JobMenu', { jobId: job.id, jobName: job.job_name })}
           >
             <View style={styles.jobCardTop}>
               {num ? <Text style={styles.jobCardNumber}>{num}</Text> : <View />}

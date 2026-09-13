@@ -1,94 +1,43 @@
 /**
- * Job Detail Screen — Native Only
- * Tab container: Time Clock | Tasks | Report
+ * Job Detail — one destination from the job menu (Time Clock, SOW, or Reports).
+ * No tab bar. Back returns to the job menu.
  */
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { C, F, S } from '../lib/tokens';
+import React from 'react';
+import { View, StyleSheet } from 'react-native';
+import { C } from '../lib/tokens';
+import JobSubHeader from '../components/JobSubHeader';
 import TimeClockTab from './tabs/TimeClockTab';
 import TasksTab from './tabs/TasksTab';
 import ReportTab from './tabs/ReportTab';
 
-const TAB_KEYS = ['TimeClock', 'Tasks', 'Report'];
-const TAB_LABELS = ['TIME CLOCK', 'FIELD SOW', 'REPORT'];
+const TITLES = {
+  TimeClock: 'TIME CLOCK',
+  Tasks: 'SOW',
+  Report: 'REPORTS',
+};
 
 export default function JobDetailScreen({ route, navigation, user }) {
-  const { jobId, jobName } = route.params;
+  const { jobId, jobName, tab = 'TimeClock' } = route.params;
   const employeeId = user?.id || '';
-  const [activeTab, setActiveTab] = useState('TimeClock');
 
-  const renderTab = () => {
-    switch (activeTab) {
-      case 'TimeClock':
-        return <TimeClockTab jobId={jobId} jobName={jobName} employeeId={employeeId} />;
-      case 'Tasks':
-        return <TasksTab jobId={jobId} employeeId={employeeId} employeeName={user?.name || ''} />;
-      case 'Report':
-        return <ReportTab jobId={jobId} employeeId={employeeId} />;
-      default:
-        return null;
-    }
-  };
+  let body = null;
+  if (tab === 'Tasks') {
+    body = <TasksTab jobId={jobId} employeeId={employeeId} employeeName={user?.name || ''} />;
+  } else if (tab === 'Report') {
+    body = <ReportTab jobId={jobId} employeeId={employeeId} />;
+  } else {
+    body = <TimeClockTab jobId={jobId} jobName={jobName} employeeId={employeeId} />;
+  }
 
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} activeOpacity={0.7}>
-          <Text style={styles.backBtn}>{'< JOBS'}</Text>
-        </TouchableOpacity>
-        <Text style={styles.jobName} numberOfLines={1}>
-          {jobName || 'Job'}
-        </Text>
-      </View>
-
-      <View style={styles.tabBar}>
-        {TAB_KEYS.map((key, i) => (
-          <TouchableOpacity
-            key={key}
-            style={[styles.tab, activeTab === key && styles.tabActive]}
-            onPress={() => setActiveTab(key)}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.tabText, activeTab === key && styles.tabTextActive]}>
-              {TAB_LABELS[i]}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <View style={styles.tabContent}>
-        {renderTab()}
-      </View>
+      <JobSubHeader navigation={navigation} title={TITLES[tab] || 'JOB'} />
+      <View style={styles.body}>{body}</View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.linen },
-  header: {
-    backgroundColor: C.dark,
-    paddingTop: 12,
-    paddingBottom: 12,
-    paddingHorizontal: S.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: S.md,
-  },
-  backBtn: { fontFamily: F.displayMed, fontSize: 14, color: C.teal, letterSpacing: 1 },
-  jobName: {
-    fontFamily: F.display, fontSize: 20, color: C.teal,
-    letterSpacing: 1, textTransform: 'uppercase', flex: 1,
-  },
-  tabBar: {
-    backgroundColor: C.dark, flexDirection: 'row',
-    borderBottomWidth: 1, borderBottomColor: C.darkBorder,
-  },
-  tab: {
-    flex: 1, paddingVertical: 12, alignItems: 'center',
-    borderBottomWidth: 3, borderBottomColor: 'transparent',
-  },
-  tabActive: { borderBottomColor: C.teal },
-  tabText: { fontFamily: F.display, fontSize: 13, color: C.textFaint, letterSpacing: 1.5 },
-  tabTextActive: { color: C.teal },
-  tabContent: { flex: 1 },
+  body: { flex: 1 },
 });

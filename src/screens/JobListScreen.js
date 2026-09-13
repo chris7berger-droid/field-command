@@ -84,9 +84,10 @@ export default function JobListScreen({ navigation, user }) {
               style={styles.card}
               activeOpacity={0.7}
               onPress={() =>
-                navigation.navigate('JobDetail', {
+                navigation.navigate('JobMenu', {
                   jobId: item.id,
                   jobName: item.job_name,
+                  from: 'list',
                 })
               }
             >

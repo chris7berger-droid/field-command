@@ -1,7 +1,7 @@
 /**
  * Field Command — App Shell (Native Only)
  *
- * Auth flow: Login → Welcome → JobList → JobDetail
+ * Auth flow: Login → Home → JobMenu → Time Clock / SOW / Reports / Customer / Job Site
  * PowerSync for offline-first data, Supabase for auth.
  */
 import '@azure/core-asynciterator-polyfill';
@@ -30,7 +30,10 @@ import PunchStatusBar from './src/components/PunchStatusBar';
 import LoginScreen from './src/screens/LoginScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import JobListScreen from './src/screens/JobListScreen';
+import JobMenuScreen from './src/screens/JobMenuScreen';
 import JobDetailScreen from './src/screens/JobDetailScreen';
+import JobCustomerScreen from './src/screens/JobCustomerScreen';
+import JobSiteScreen from './src/screens/JobSiteScreen';
 
 const Stack = createNativeStackNavigator();
 const db = getPowerSync();
@@ -170,9 +173,12 @@ export default function App() {
             <Stack.Screen name="JobList">
               {(props) => <JobListScreen {...props} user={user} />}
             </Stack.Screen>
+            <Stack.Screen name="JobMenu" component={JobMenuScreen} />
             <Stack.Screen name="JobDetail">
               {(props) => <JobDetailScreen {...props} user={user} />}
             </Stack.Screen>
+            <Stack.Screen name="JobCustomer" component={JobCustomerScreen} />
+            <Stack.Screen name="JobSite" component={JobSiteScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       </View>
