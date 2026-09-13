@@ -118,16 +118,22 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     () => punchesForOpenShift(todayPunches, jobId, tod()),
     [todayPunches, jobId]
   );
+  const shiftClockIn = (activePunches || []).find((p) => p.punch_type === 'clock_in');
+  const shiftStartIso = shiftClockIn?.punch_time
+    || new Date(workDate + 'T00:00:00').toISOString();
 
-  // PRT + daily logs: clock-out waits until SOD, MOD, EOD, and this shift's PRT are in.
+  // PRT + daily logs: clock-out waits until this shift's SOD, MOD, EOD, and PRT.
   const { data: prtRows } = useQuery(
-    'SELECT status FROM daily_production_reports WHERE job_id = ? AND report_date = ? LIMIT 1',
+    'SELECT status, created_at FROM daily_production_reports WHERE job_id = ? AND report_date = ? LIMIT 1',
     [jobId, workDate]
   );
-  const prtSubmitted = ['submitted', 'approved'].includes(prtRows?.[0]?.status);
+  const prtAfterClockIn = !shiftClockIn
+    || !prtRows?.[0]?.created_at
+    || String(prtRows[0].created_at) >= String(shiftClockIn.punch_time);
+  const prtSubmitted = ['submitted', 'approved'].includes(prtRows?.[0]?.status) && prtAfterClockIn;
   const { data: todayLogs } = useQuery(
     `SELECT entry_type FROM daily_log_entries WHERE job_id = ? AND created_at >= ?`,
-    [jobId, new Date(workDate + 'T00:00:00').toISOString()]
+    [jobId, shiftStartIso]
   );
 
   useEffect(() => {
