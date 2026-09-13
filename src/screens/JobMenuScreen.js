@@ -3,11 +3,12 @@
  * instead of landing on Clock In.
  */
 import React, { useMemo } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Alert, StyleSheet } from 'react-native';
 import { useQuery } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
 import { tod } from '../lib/utils';
 import { LIVE_JOB_FILTER, jobNumber, tripLine, tripsByCallLog } from '../lib/trips';
+import { reportClockGate, reportClockCopy, openClockJobId, switchJobClockCopy, punchLookbackDate } from '../lib/dayDuty';
 import LinenBackground from '../components/LinenBackground';
 
 const DESTINATIONS = [
@@ -45,14 +46,57 @@ export default function JobMenuScreen({ route, navigation }) {
     [jobId]
   );
 
+  const { data: punchRows } = useQuery(
+    `SELECT job_id, punch_type, punch_time FROM time_punches WHERE punch_date >= ? ORDER BY punch_time ASC`,
+    [punchLookbackDate(today)]
+  );
+
+  const { data: openJobRows } = useQuery(
+    `SELECT * FROM call_log WHERE id = ?`,
+    [openClockJobId(punchRows) || jobId]
+  );
+
   const trip = useMemo(() => {
     const map = tripsByCallLog(mobRows, wtcTripRows);
     return tripLine(map.get(String(jobId)), today);
   }, [mobRows, wtcTripRows, jobId, today]);
 
   const num = jobNumber(job);
+  const openJob = openJobRows?.[0] || null;
+  const openLabel = jobNumber(openJob) || openJob?.job_name || 'that job';
+
+  const goClock = (target) => {
+    navigation.navigate('JobDetail', {
+      jobId: target.id,
+      jobName: target.job_name,
+      tab: 'TimeClock',
+    });
+  };
 
   const open = (dest) => {
+    if (dest.key === 'Reports') {
+      const gate = reportClockGate(jobId, punchRows);
+      if (!gate.allowed) {
+        const copy = reportClockCopy(gate.kind, openLabel);
+        const destJob = gate.kind === 'other' && openJob ? openJob : job;
+        Alert.alert(copy.title, copy.body || undefined, [
+          { text: 'Cancel', style: 'cancel' },
+          { text: copy.confirm, onPress: () => goClock(destJob) },
+        ]);
+        return;
+      }
+    }
+    if (dest.key === 'TimeClock') {
+      const openId = openClockJobId(punchRows);
+      if (openId && openId !== String(jobId) && openJob) {
+        const copy = switchJobClockCopy(openLabel);
+        Alert.alert(copy.title, copy.body || undefined, [
+          { text: 'Cancel', style: 'cancel' },
+          { text: copy.confirm, onPress: () => goClock(openJob) },
+        ]);
+        return;
+      }
+    }
     navigation.navigate(dest.screen, {
       jobId,
       jobName: job.job_name || jobName,

@@ -3,6 +3,64 @@
  * Windows are counted from clock-in so a late start still has a real due time.
  * Clock-out is blocked until all four are done.
  */
+import { localYmd, tod, addDaysYmd } from './utils';
+
+const nightWorkAck = new Set();
+
+export function punchLookbackDate(today = tod()) {
+  return addDaysYmd(today, -2);
+}
+
+export function punchDay(punch) {
+  if (!punch) return null;
+  if (punch.punch_time) {
+    const d = new Date(punch.punch_time);
+    if (!Number.isNaN(d.getTime())) return localYmd(d);
+  }
+  return punch.punch_date || null;
+}
+
+export function openClockInPunch(punches) {
+  const open = new Map();
+  const sorted = [...(punches || [])].sort((a, b) =>
+    String(a.punch_time || '').localeCompare(String(b.punch_time || ''))
+  );
+  for (const p of sorted) {
+    const id = String(p.job_id || '');
+    if (!id || id === 'null') continue;
+    if (p.punch_type === 'clock_in') open.set(id, p);
+    if (p.punch_type === 'clock_out') open.delete(id);
+  }
+  let best = null;
+  for (const p of open.values()) {
+    if (!best || String(p.punch_time) > String(best.punch_time)) best = p;
+  }
+  return best;
+}
+
+export function ackNightWork(clockInId) {
+  if (clockInId) nightWorkAck.add(String(clockInId));
+}
+
+export function isNightWorkAcked(clockInId) {
+  return !!clockInId && nightWorkAck.has(String(clockInId));
+}
+
+export function shiftDate(punches, today = tod()) {
+  return punchDay(openClockInPunch(punches)) || today;
+}
+
+export function isOvernightShift(punches, today = tod()) {
+  const open = openClockInPunch(punches);
+  if (!open) return false;
+  const day = punchDay(open);
+  if (day && day < today) return true;
+  if (!open.punch_time) return false;
+  const start = new Date(open.punch_time);
+  if (Number.isNaN(start.getTime())) return false;
+  return start.getTime() < new Date(`${today}T00:00:00`).getTime();
+}
+
 export const DUTY_LOGS = [
   { key: 'SOD', label: 'START OF DAY', short: 'SOD', dueAfterMs: 15 * 60 * 1000, dueHour: null },
   { key: 'MOD', label: 'MID DAY', short: 'MOD', dueAfterMs: 4 * 60 * 60 * 1000, dueHour: 12 },
@@ -29,6 +87,45 @@ export function dutyState({ done, clockInTime, now, dueAfterMs, dueHour }) {
   if (done) return 'done';
   if (isDutyDue(clockInTime, now, dueAfterMs, dueHour)) return 'due';
   return 'upcoming';
+}
+
+// Job with an open clock-in (no matching clock-out). Lunch and drive
+// punches do not change it. Null = not on a job.
+export function openClockJobId(punches) {
+  const p = openClockInPunch(punches);
+  return p ? String(p.job_id) : null;
+}
+
+export function reportClockGate(targetJobId, punches) {
+  if (!Array.isArray(punches)) return { allowed: true, openId: null };
+  const openId = openClockJobId(punches);
+  const target = String(targetJobId);
+  if (openId === target) return { allowed: true, openId };
+  if (openId) return { allowed: false, kind: 'other', openId };
+  return { allowed: false, kind: 'none', openId: null };
+}
+
+export function reportClockCopy(kind, openLabel) {
+  if (kind === 'other') {
+    return {
+      title: "You're punched into the wrong job for this report.",
+      body: null,
+      confirm: openLabel,
+    };
+  }
+  return {
+    title: 'Clock in first.',
+    body: null,
+    confirm: 'Clock in',
+  };
+}
+
+export function switchJobClockCopy(openLabel) {
+  return {
+    title: "You're punched into another job.",
+    body: null,
+    confirm: openLabel,
+  };
 }
 
 export function missingClockOutDuties({ logTypes, prtSubmitted }) {

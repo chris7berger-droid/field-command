@@ -9,12 +9,18 @@
  *   - same window, no PRT → red "PRT NOT SUBMITTED"
  * Clock-out is blocked until SOD, MOD, EOD, and PRT are in.
  */
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
-import { useQuery } from '@powersync/react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { View, Text, StyleSheet, Animated, Easing, TouchableOpacity, Alert } from 'react-native';
+import { useQuery, usePowerSync } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
-import { tod } from '../lib/utils';
-import { DUTY_LOGS, PRT_DUTY, dutyState } from '../lib/dayDuty';
+import { tod, localYmd } from '../lib/utils';
+import { getCurrentPosition } from '../lib/location';
+import { fetchWeather } from '../lib/weather';
+import {
+  DUTY_LOGS, PRT_DUTY, dutyState,
+  punchLookbackDate, openClockInPunch, isOvernightShift,
+  ackNightWork, isNightWorkAcked, punchDay,
+} from '../lib/dayDuty';
 
 const STATUS_CONFIG = {
   not_clocked_in: { label: 'NOT CLOCKED IN', color: C.amber,     bg: '#2a2010' },
@@ -27,11 +33,22 @@ const STATUS_CONFIG = {
 const ALERT_RED = '#7f1d1d';
 const ALERT_AMBER = '#2a2010';
 
+function generateId() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 export default function PunchStatusBar() {
+  const db = usePowerSync();
   const [now, setNow] = useState(new Date());
+  const [busy, setBusy] = useState(false);
+  const [, setNightAck] = useState(0);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const today = tod();
-  const todayStartIso = new Date(today + 'T00:00:00').toISOString();
+  const lookback = punchLookbackDate(today);
+  const lookbackIso = new Date(lookback + 'T00:00:00').toISOString();
 
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 1000);
@@ -39,40 +56,50 @@ export default function PunchStatusBar() {
   }, []);
 
   const { data: punches } = useQuery(
-    `SELECT * FROM time_punches WHERE punch_date = ? ORDER BY punch_time ASC`,
-    [today]
+    `SELECT * FROM time_punches WHERE punch_date >= ? ORDER BY punch_time ASC`,
+    [lookback]
   );
 
-  // Query all daily log entries for today (across all jobs)
   const { data: logEntries } = useQuery(
-    `SELECT job_id, entry_type FROM daily_log_entries WHERE created_at >= ?`,
-    [todayStartIso]
+    `SELECT job_id, entry_type, created_at FROM daily_log_entries WHERE created_at >= ?`,
+    [lookbackIso]
   );
 
   const { data: prtReports } = useQuery(
-    `SELECT job_id, status FROM daily_production_reports
-      WHERE report_date = ? AND (status = 'submitted' OR status = 'approved')`,
-    [today]
+    `SELECT job_id, status, report_date FROM daily_production_reports
+      WHERE report_date >= ? AND (status = 'submitted' OR status = 'approved')`,
+    [lookback]
   );
 
-  const { status, elapsed } = deriveStatus(punches || [], now);
+  const punchList = punches || [];
+  const openPunch = openClockInPunch(punchList);
+  const overnight = isOvernightShift(punchList, today);
+  const nightChosen = overnight && isNightWorkAcked(openPunch?.id);
+  const showOvernight = overnight && !nightChosen;
+
+  const { status, elapsed } = deriveStatus(punchList, now);
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.not_clocked_in;
   const isActive = status !== 'clocked_out' && status !== 'shift_done';
 
-  // Alerts match clock-out: SOD / MOD / EOD / PRT for the job they clocked into,
-  // not "any job today."
+  const workDate = punchDay(openPunch) || today;
+
   const alerts = useMemo(() => {
-    const punchList = punches || [];
+    if (showOvernight) return [];
     if (punchList.length === 0) return [];
 
     const logsByJob = new Map();
     for (const e of (logEntries || [])) {
+      if (!e.created_at) continue;
+      const when = new Date(e.created_at);
+      if (Number.isNaN(when.getTime()) || localYmd(when) !== workDate) continue;
       const id = String(e.job_id);
       if (!logsByJob.has(id)) logsByJob.set(id, new Set());
       logsByJob.get(id).add(e.entry_type);
     }
     const prtByJob = new Set(
-      (prtReports || []).map((r) => String(r.job_id))
+      (prtReports || [])
+        .filter((r) => r.report_date === workDate)
+        .map((r) => String(r.job_id))
     );
 
     const byJob = new Map();
@@ -94,6 +121,7 @@ export default function PunchStatusBar() {
       const clockIn = list.find((p) => p.punch_type === 'clock_in');
       if (!clockIn) continue;
       const clockOut = list.find((p) => p.punch_type === 'clock_out');
+      if (clockOut) continue;
       const jobId = String(clockIn.job_id);
       const types = logsByJob.get(jobId) || new Set();
       const prtDone = prtByJob.has(jobId);
@@ -119,17 +147,64 @@ export default function PunchStatusBar() {
         dueAfterMs: PRT_DUTY.dueAfterMs,
         dueHour: PRT_DUTY.dueHour,
       });
-      if (prtState === 'due' || (clockOut && !prtDone)) {
+      if (prtState === 'due') {
         pushAlert('PRT NOT SUBMITTED', '#ef4444', ALERT_RED);
       }
     }
 
     return result;
-  }, [punches, logEntries, prtReports, now]);
+  }, [punchList, logEntries, prtReports, now, workDate, showOvernight]);
+
+  const punchOutNow = useCallback(async () => {
+    if (!openPunch || busy) return;
+    setBusy(true);
+    let lat = null;
+    let lng = null;
+    let onSite = 0;
+    let gpsOverride = 1;
+    let weather = null;
+    try {
+      const pos = await getCurrentPosition();
+      lat = pos.latitude;
+      lng = pos.longitude;
+      gpsOverride = 0;
+      weather = await fetchWeather(lat, lng);
+    } catch {
+      // Still clock out. They're fixing a missed punch, not starting a shift.
+    }
+    try {
+      const stamp = new Date().toISOString();
+      await db.execute(
+        `INSERT INTO time_punches (id, job_id, employee_id, punch_type, punch_time, punch_date,
+          latitude, longitude, on_site, gps_override, weather_temp, weather_condition, synced, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+        [
+          generateId(),
+          openPunch.job_id,
+          openPunch.employee_id,
+          'clock_out',
+          stamp,
+          today,
+          lat, lng, onSite, gpsOverride,
+          weather?.temp_f || null, weather?.condition || null,
+          stamp,
+        ]
+      );
+    } catch (e) {
+      Alert.alert('Could not punch out', e?.message || 'Try again.');
+    } finally {
+      setBusy(false);
+    }
+  }, [openPunch, busy, db, today]);
+
+  const chooseNightWork = useCallback(() => {
+    ackNightWork(openPunch?.id);
+    setNightAck((n) => n + 1);
+  }, [openPunch]);
 
   // Pulse animation for active states
   useEffect(() => {
-    if (isActive || alerts.length > 0) {
+    if (isActive || alerts.length > 0 || showOvernight) {
       const loop = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, { toValue: 0.3, duration: 1000, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
@@ -138,10 +213,9 @@ export default function PunchStatusBar() {
       );
       loop.start();
       return () => loop.stop();
-    } else {
-      pulseAnim.setValue(1);
     }
-  }, [isActive, alerts.length]);
+    pulseAnim.setValue(1);
+  }, [isActive, alerts.length, showOvernight]);
 
   return (
     <View>
@@ -157,7 +231,29 @@ export default function PunchStatusBar() {
           <Text style={[styles.elapsed, { color: config.color }]}>{elapsed}</Text>
         ) : null}
       </View>
-      {alerts.map((alert, i) => (
+      {showOvernight ? (
+        <View style={styles.overnight}>
+          <Text style={styles.overnightTitle}>Still punched in from yesterday.</Text>
+          <TouchableOpacity
+            style={styles.overnightBtn}
+            activeOpacity={0.7}
+            disabled={busy}
+            onPress={punchOutNow}
+          >
+            <Text style={styles.overnightBtnText}>
+              {busy ? 'PUNCHING OUT…' : 'PUNCH OUT NOW AND NOTIFY OFFICE'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.overnightBtnSecondary}
+            activeOpacity={0.7}
+            disabled={busy}
+            onPress={chooseNightWork}
+          >
+            <Text style={styles.overnightBtnSecondaryText}>NIGHT WORK</Text>
+          </TouchableOpacity>
+        </View>
+      ) : alerts.map((alert, i) => (
         <View key={i} style={[styles.alertBar, { backgroundColor: alert.bg }]}>
           <Animated.View style={[styles.alertDot, { backgroundColor: alert.color, opacity: pulseAnim }]} />
           <Text style={[styles.alertLabel, { color: alert.color }]}>{alert.label}</Text>
@@ -193,7 +289,15 @@ function deriveStatus(punches, now) {
       return { status: 'on_lunch', elapsed };
     case 'lunch_end':
       return { status: 'on_site', elapsed };
-    case 'clock_out': return { status: 'shift_done', elapsed: null };
+    case 'clock_out': {
+      const closed = [...punches].reverse().find((p) => p.punch_type === 'clock_in');
+      const inDay = punchDay(closed);
+      const outDay = punchDay(last);
+      if (inDay && outDay && inDay !== outDay) {
+        return { status: 'not_clocked_in', elapsed: null };
+      }
+      return { status: 'shift_done', elapsed: null };
+    }
     default:
       return { status: 'not_clocked_in', elapsed: null };
   }
@@ -258,6 +362,47 @@ const styles = StyleSheet.create({
   alertLabel: {
     fontFamily: F.display,
     fontSize: 13,
+    letterSpacing: 2,
+  },
+  overnight: {
+    backgroundColor: '#2a2010',
+    paddingHorizontal: S.md,
+    paddingTop: S.sm,
+    paddingBottom: S.md,
+    gap: S.sm,
+  },
+  overnightTitle: {
+    fontFamily: F.display,
+    fontSize: 16,
+    color: C.amber,
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  overnightBtn: {
+    backgroundColor: C.dark,
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: C.amber,
+  },
+  overnightBtnText: {
+    fontFamily: F.display,
+    fontSize: 13,
+    color: C.amber,
+    letterSpacing: 1,
+    textAlign: 'center',
+  },
+  overnightBtnSecondary: {
+    backgroundColor: C.dark,
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  overnightBtnSecondaryText: {
+    fontFamily: F.display,
+    fontSize: 16,
+    color: C.teal,
     letterSpacing: 2,
   },
 });

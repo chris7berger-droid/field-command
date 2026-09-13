@@ -24,7 +24,8 @@ import { C, F, S } from '../../lib/tokens';
 import { fmtTime, tod } from '../../lib/utils';
 import { getCurrentPosition, checkGeofence, DEMO_POSITIONS } from '../../lib/location';
 import { fetchWeather } from '../../lib/weather';
-import { missingClockOutDuties } from '../../lib/dayDuty';
+import { missingClockOutDuties, openClockJobId, switchJobClockCopy, punchLookbackDate, shiftDate } from '../../lib/dayDuty';
+import { jobNumber } from '../../lib/trips';
 import LinenBackground from '../../components/LinenBackground';
 
 const LUNCH_DURATION_MS = 30 * 60 * 1000;
@@ -50,7 +51,7 @@ const STANDARD_STEPS = [
   { id: 'clock_out',   punch: 'clock_out',   label: 'CLOCK OUT',   hint: 'Tap to end your shift' },
 ];
 
-export default function TimeClockTab({ jobId, jobName, employeeId }) {
+export default function TimeClockTab({ jobId, jobName, employeeId, navigation }) {
   const db = usePowerSync();
 
   // ── State ─────────────────────────────────────────────
@@ -94,21 +95,35 @@ export default function TimeClockTab({ jobId, jobName, employeeId }) {
   const isOnLunch = currentStep?.id === 'lunch_end';
   const shiftComplete = currentStepIdx >= steps.length;
 
-  // ── Load today's punches + restore state ──────────────
+  const lookback = punchLookbackDate();
+
+  // ── Load this shift's punches (open overnight clock-ins included) ──
   const { data: todayPunches } = useQuery(
-    'SELECT * FROM time_punches WHERE job_id = ? AND punch_date = ? ORDER BY punch_time ASC',
-    [jobId, tod()]
+    'SELECT * FROM time_punches WHERE job_id = ? AND punch_date >= ? ORDER BY punch_time ASC',
+    [jobId, lookback]
   );
 
-  // PRT + daily logs: clock-out waits until SOD, MOD, EOD, and today's PRT are in.
+  const { data: allTodayPunches } = useQuery(
+    'SELECT job_id, punch_type, punch_time FROM time_punches WHERE punch_date >= ? ORDER BY punch_time ASC',
+    [lookback]
+  );
+  const otherOpenId = openClockJobId(allTodayPunches);
+  const { data: otherJobRows } = useQuery(
+    'SELECT * FROM call_log WHERE id = ?',
+    [otherOpenId && otherOpenId !== String(jobId) ? otherOpenId : jobId]
+  );
+
+  const workDate = shiftDate(allTodayPunches);
+
+  // PRT + daily logs: clock-out waits until SOD, MOD, EOD, and this shift's PRT are in.
   const { data: prtRows } = useQuery(
     'SELECT status FROM daily_production_reports WHERE job_id = ? AND report_date = ? LIMIT 1',
-    [jobId, tod()]
+    [jobId, workDate]
   );
   const prtSubmitted = ['submitted', 'approved'].includes(prtRows?.[0]?.status);
   const { data: todayLogs } = useQuery(
     `SELECT entry_type FROM daily_log_entries WHERE job_id = ? AND created_at >= ?`,
-    [jobId, new Date(tod() + 'T00:00:00').toISOString()]
+    [jobId, new Date(workDate + 'T00:00:00').toISOString()]
   );
 
   useEffect(() => {
@@ -214,6 +229,24 @@ export default function TimeClockTab({ jobId, jobName, employeeId }) {
   // ── Execute current step ──────────────────────────────
   const executeStep = useCallback(async (gpsOverride = false) => {
     if (!currentStep || !currentStep.label) return;
+    const otherId = openClockJobId(allTodayPunches);
+    if (otherId && otherId !== String(jobId)) {
+      const other = otherJobRows?.[0];
+      const label = jobNumber(other) || other?.job_name || 'that job';
+      const copy = switchJobClockCopy(label);
+      Alert.alert(copy.title, copy.body || undefined, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: copy.confirm,
+          onPress: () => navigation?.navigate('JobDetail', {
+            jobId: other?.id || otherId,
+            jobName: other?.job_name,
+            tab: 'TimeClock',
+          }),
+        },
+      ]);
+      return;
+    }
     let gpsResult;
     try {
       gpsResult = await checkGPS();
@@ -250,7 +283,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId }) {
     if (currentStep.punch === 'lunch_start') setLunchStart(new Date());
     Vibration.vibrate(100);
     advanceStep();
-  }, [currentStep, checkGPS, writePunch, advanceStep, prtSubmitted, todayLogs]);
+  }, [currentStep, checkGPS, writePunch, advanceStep, prtSubmitted, todayLogs, allTodayPunches, otherJobRows, jobId, navigation]);
 
   // ── Confirm clock out ─────────────────────────────────
   const confirmClockOut = useCallback(async () => {

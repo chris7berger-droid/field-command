@@ -20,7 +20,8 @@ import { parseJSON, parseJSONArray, tod } from '../../lib/utils';
 import { uploadPhotos } from '../../lib/photos';
 import LinenBackground from '../../components/LinenBackground';
 import { mergeDaysByDate } from './TasksTab';
-import { pickSowDaysForPrt } from '../../lib/dayDuty';
+import { pickSowDaysForPrt, reportClockGate, reportClockCopy, punchLookbackDate, shiftDate } from '../../lib/dayDuty';
+import { jobNumber } from '../../lib/trips';
 
 const LOG_TYPES = [
   { key: 'SOD', label: 'START OF DAY', hint: 'Photos of job site at start' },
@@ -144,7 +145,7 @@ function prtRung(pctToday, targetPct) {
   return PRT_RUNGS.nearZero;
 }
 
-export default function ReportTab({ jobId, employeeId }) {
+export default function ReportTab({ jobId, employeeId, jobName, navigation }) {
   const db = usePowerSync();
   const today = tod();
   const [section, setSection] = useState('prt'); // 'prt' | 'log'
@@ -189,18 +190,30 @@ export default function ReportTab({ jobId, employeeId }) {
     return { days: [], allTbd: false };
   }, [wtcRows, jobRow, tripRows]);
 
+  const lookback = punchLookbackDate(today);
+  const { data: punchRows } = useQuery(
+    `SELECT job_id, punch_type, punch_time FROM time_punches WHERE punch_date >= ? ORDER BY punch_time ASC`,
+    [lookback]
+  );
+  const workDate = shiftDate(punchRows, today);
+  const reportGate = reportClockGate(jobId, punchRows);
+  const { data: clockJobRows } = useQuery(
+    `SELECT * FROM call_log WHERE id = ?`,
+    [reportGate.openId || jobId]
+  );
+
   // Production day = prior submitted PRTs (office measures by day count, not
   // calendar date). When Schedule has dated a SOW day as today, use that day.
   const { data: priorPrtRows } = useQuery(
     `SELECT DISTINCT report_date FROM daily_production_reports
       WHERE job_id = ? AND report_date != ?
         AND (status = 'submitted' OR status = 'approved')`,
-    [jobId, today]
+    [jobId, workDate]
   );
   const priorPrtCount = priorPrtRows?.length || 0;
   const prtDays = useMemo(
-    () => pickSowDaysForPrt(days, today, priorPrtCount),
-    [days, today, priorPrtCount]
+    () => pickSowDaysForPrt(days, workDate, priorPrtCount),
+    [days, workDate, priorPrtCount]
   );
 
   const todaySowTasks = useMemo(() => tasksFromDays(prtDays), [prtDays]);
@@ -217,7 +230,7 @@ export default function ReportTab({ jobId, employeeId }) {
   // ── PRT State ───────────────────────────────────────────
   const { data: existingReports } = useQuery(
     `SELECT * FROM daily_production_reports WHERE job_id = ? AND report_date = ? LIMIT 1`,
-    [jobId, today]
+    [jobId, workDate]
   );
   const existingReport = existingReports?.[0] || null;
   const prtSubmitted = existingReport?.status === 'submitted' || existingReport?.status === 'approved';
@@ -328,7 +341,7 @@ export default function ReportTab({ jobId, employeeId }) {
         const id = generateId();
         await db.execute(
           `INSERT INTO daily_production_reports (id,job_id,wtc_id,report_date,submitted_by,tasks,materials_used,hours_regular,hours_ot,photos,notes,status,synced,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?)`,
-          [id, jobId, sowWtcId, today, employeeId, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, new Date().toISOString()]
+          [id, jobId, sowWtcId, workDate, employeeId, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, new Date().toISOString()]
         );
       }
       Vibration.vibrate([100, 50, 100]);
@@ -338,7 +351,7 @@ export default function ReportTab({ jobId, employeeId }) {
     } finally {
       setPrtSubmitting(false);
     }
-  }, [taskEntries, existingReport, jobId, employeeId, today, db, sowWtcId]);
+  }, [taskEntries, existingReport, jobId, employeeId, workDate, db, sowWtcId]);
 
   const savePRTDraft = useCallback(async () => {
     const data = {
@@ -359,11 +372,11 @@ export default function ReportTab({ jobId, employeeId }) {
       const id = generateId();
       await db.execute(
         `INSERT INTO daily_production_reports (id,job_id,wtc_id,report_date,submitted_by,tasks,materials_used,hours_regular,hours_ot,photos,notes,status,synced,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?)`,
-      [id, jobId, sowWtcId, today, employeeId, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, new Date().toISOString()]
+      [id, jobId, sowWtcId, workDate, employeeId, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, new Date().toISOString()]
       );
     }
     Vibration.vibrate(50);
-  }, [taskEntries, existingReport, jobId, employeeId, today, db, sowWtcId]);
+  }, [taskEntries, existingReport, jobId, employeeId, workDate, db, sowWtcId]);
 
   // ── Daily Log Submit (optimistic — save immediately, upload photos in background) ──
   const submitLogEntry = useCallback(async () => {
@@ -418,6 +431,40 @@ export default function ReportTab({ jobId, employeeId }) {
   }, [logType, logPhotos, logNotes, jobId, employeeId, db]);
 
   // ── Render ──────────────────────────────────────────────
+  if (Array.isArray(punchRows) && !reportGate.allowed) {
+    const openJob = clockJobRows?.[0];
+    const openLabel = jobNumber(openJob) || openJob?.job_name || 'that job';
+    const copy = reportClockCopy(reportGate.kind, openLabel);
+    const destId = reportGate.kind === 'other' ? (reportGate.openId || jobId) : jobId;
+    const destName = reportGate.kind === 'other'
+      ? (openJob?.job_name || jobName)
+      : jobName;
+    return (
+      <LinenBackground>
+        <ScrollView
+          style={{ flex: 1, backgroundColor: 'transparent' }}
+          contentContainerStyle={styles.content}
+        >
+          <View style={styles.gateCard}>
+            <Text style={styles.gateTitle}>{copy.title}</Text>
+            {copy.body ? <Text style={styles.gateBody}>{copy.body}</Text> : null}
+            <TouchableOpacity
+              style={styles.gateBtn}
+              activeOpacity={0.7}
+              onPress={() => navigation?.navigate('JobDetail', {
+                jobId: destId,
+                jobName: destName,
+                tab: 'TimeClock',
+              })}
+            >
+              <Text style={styles.gateBtnText}>{copy.confirm}</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </LinenBackground>
+    );
+  }
+
   return (
     <LinenBackground>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -673,6 +720,23 @@ function generateId() {
 
 const styles = StyleSheet.create({
   content: { padding: S.md, paddingBottom: 100 },
+
+  gateCard: {
+    backgroundColor: C.linenCard, borderRadius: 12, padding: S.lg,
+    borderWidth: 1, borderColor: C.borderStrong, marginTop: S.md,
+  },
+  gateTitle: {
+    fontFamily: F.display, fontSize: 24, color: C.textHead,
+    letterSpacing: 0.5, marginBottom: S.sm,
+  },
+  gateBody: {
+    fontFamily: F.body, fontSize: 16, color: C.textBody,
+    lineHeight: 24, marginBottom: S.lg,
+  },
+  gateBtn: {
+    backgroundColor: C.dark, borderRadius: 10, paddingVertical: 18, alignItems: 'center',
+  },
+  gateBtnText: { fontFamily: F.display, fontSize: 18, color: C.teal, letterSpacing: 2 },
 
   // Toggle
   toggleRow: { flexDirection: 'row', backgroundColor: C.linenDeep, borderRadius: 10, padding: 3, marginBottom: S.lg, borderWidth: 1, borderColor: C.borderStrong },

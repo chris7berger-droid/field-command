@@ -1,9 +1,19 @@
 /**
- * Job Site page — address from the job. Access/lock codes and Maps
- * navigation are not piped yet.
+ * Job Site — address from the job, plus Get Directions into Maps.
+ * Lock codes / gate access are not on the job yet, so this page does
+ * not invent them.
  */
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  Linking,
+  Platform,
+  Alert,
+  StyleSheet,
+} from 'react-native';
 import { useQuery } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
 import JobSubHeader from '../components/JobSubHeader';
@@ -19,14 +29,51 @@ function formatAddress(job) {
   return { line1, cityLine };
 }
 
+function mapsDest(job, addr) {
+  const lat = Number(job.jobsite_latitude);
+  const lng = Number(job.jobsite_longitude);
+  if (Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0)) {
+    return { kind: 'coords', lat, lng };
+  }
+  const q = [addr?.line1, addr?.cityLine].filter(Boolean).join(', ');
+  return q ? { kind: 'query', q } : null;
+}
+
+function directionsUrl(dest) {
+  if (dest.kind === 'coords') {
+    const { lat, lng } = dest;
+    if (Platform.OS === 'ios') {
+      return `http://maps.apple.com/?daddr=${lat},${lng}&dirflg=d`;
+    }
+    return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+  }
+  const q = encodeURIComponent(dest.q);
+  if (Platform.OS === 'ios') {
+    return `http://maps.apple.com/?daddr=${q}&dirflg=d`;
+  }
+  return `https://www.google.com/maps/dir/?api=1&destination=${q}`;
+}
+
+async function openDirections(dest) {
+  const url = directionsUrl(dest);
+  try {
+    await Linking.openURL(url);
+  } catch {
+    Alert.alert('Maps', 'Could not open Maps on this phone.');
+  }
+}
+
 export default function JobSiteScreen({ route, navigation }) {
   const { jobId } = route.params;
   const { data: rows } = useQuery(
-    `SELECT jobsite_address, jobsite_city, jobsite_state, jobsite_zip
+    `SELECT jobsite_address, jobsite_city, jobsite_state, jobsite_zip,
+            jobsite_latitude, jobsite_longitude
        FROM call_log WHERE id = ?`,
     [jobId]
   );
-  const addr = formatAddress(rows?.[0] || {});
+  const job = rows?.[0] || {};
+  const addr = formatAddress(job);
+  const dest = mapsDest(job, addr);
 
   return (
     <View style={styles.screen}>
@@ -48,21 +95,15 @@ export default function JobSiteScreen({ route, navigation }) {
             )}
           </View>
 
-          <Text style={styles.section}>ACCESS</Text>
-          <View style={styles.card}>
-            <Text style={styles.empty}>
-              Lock codes, gate codes, and site access notes are not on this job
-              yet. They have not been piped from Sales Command.
-            </Text>
-          </View>
-
-          <Text style={styles.section}>NAVIGATION</Text>
-          <View style={styles.card}>
-            <Text style={styles.empty}>
-              Get directions is not in Field or Schedule yet. That is a later
-              item for both apps.
-            </Text>
-          </View>
+          {dest ? (
+            <TouchableOpacity
+              style={styles.btn}
+              activeOpacity={0.7}
+              onPress={() => openDirections(dest)}
+            >
+              <Text style={styles.btnText}>GET DIRECTIONS</Text>
+            </TouchableOpacity>
+          ) : null}
         </ScrollView>
       </LinenBackground>
     </View>
@@ -72,11 +113,19 @@ export default function JobSiteScreen({ route, navigation }) {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.linen },
   content: { padding: S.md, paddingBottom: S.xxl },
-  section: { fontFamily: F.display, fontSize: 13, color: C.textMuted, letterSpacing: 2, marginBottom: S.sm },
+  section: {
+    fontFamily: F.display, fontSize: 13, color: C.textMuted,
+    letterSpacing: 2, marginBottom: S.sm,
+  },
   card: {
     backgroundColor: C.linenCard, borderRadius: 10, padding: S.md,
     borderWidth: 1, borderColor: C.borderStrong, marginBottom: S.lg,
   },
   addr: { fontFamily: F.bodyMed, fontSize: 16, color: C.textHead, lineHeight: 24 },
   empty: { fontFamily: F.body, fontSize: 14, color: C.textBody, lineHeight: 21 },
+  btn: {
+    backgroundColor: C.dark, borderRadius: 10, paddingVertical: 20,
+    alignItems: 'center',
+  },
+  btnText: { fontFamily: F.display, fontSize: 22, color: C.teal, letterSpacing: 2 },
 });

@@ -4,7 +4,7 @@
  * The week strip is a record of those days, not hours.
  */
 import React, { useMemo, useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Alert, StyleSheet } from 'react-native';
 import { useQuery } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
 import { parseJSON, parseJSONArray, tod, addDaysYmd, localYmd } from '../lib/utils';
@@ -12,7 +12,10 @@ import {
   LIVE_JOB_FILTER, jobNumber, tripLine, tripsByCallLog,
   collectSowDates, isActiveThisWeek,
 } from '../lib/trips';
-import { DUTY_LOGS, PRT_DUTY, dutyState, pickSowDaysForPrt } from '../lib/dayDuty';
+import {
+  DUTY_LOGS, PRT_DUTY, dutyState, pickSowDaysForPrt,
+  openClockInPunch, punchDay, reportClockGate, reportClockCopy,
+} from '../lib/dayDuty';
 import { mergeDaysByDate } from './tabs/TasksTab';
 import LinenBackground from '../components/LinenBackground';
 
@@ -216,15 +219,20 @@ export default function HomeScreen({ navigation, userName }) {
     return counts;
   }, [priorPrtRows]);
 
-  const clockInByJob = useMemo(() => {
-    const m = new Map();
-    for (const p of (weekPunches || [])) {
-      if (p.punch_type !== 'clock_in' || p.punch_date !== today) continue;
-      const id = String(p.job_id);
-      if (!m.has(id)) m.set(id, p.punch_time);
-    }
-    return m;
-  }, [weekPunches, today]);
+  const openPunch = useMemo(() => openClockInPunch(weekPunches), [weekPunches]);
+  const onJobId = openPunch ? String(openPunch.job_id) : null;
+  const workDate = punchDay(openPunch) || today;
+
+  const todayJobs = useMemo(() => {
+    const list = [...weekJobs];
+    if (!onJobId) return list;
+    list.sort((a, b) => {
+      const aOn = String(a.id) === onJobId ? 0 : 1;
+      const bOn = String(b.id) === onJobId ? 0 : 1;
+      return aOn - bOn;
+    });
+    return list;
+  }, [weekJobs, onJobId]);
 
   const weekStrip = useMemo(() => weekDates.map((date) => {
     const isFuture = date > today;
@@ -251,12 +259,32 @@ export default function HomeScreen({ navigation, userName }) {
     };
   }), [weekDates, today, weekLogs, weekReports]);
 
-  const goReports = (job) => {
+  const goClock = (job) => {
     navigation.navigate('JobDetail', {
       jobId: job.id,
       jobName: job.job_name,
-      tab: 'Report',
+      tab: 'TimeClock',
     });
+  };
+
+  const goReports = (job) => {
+    const gate = reportClockGate(job.id, weekPunches == null ? null : weekPunches);
+    if (gate.allowed) {
+      navigation.navigate('JobDetail', {
+        jobId: job.id,
+        jobName: job.job_name,
+        tab: 'Report',
+      });
+      return;
+    }
+    const openJob = (jobs || []).find((j) => String(j.id) === gate.openId);
+    const openLabel = jobNumber(openJob) || openJob?.job_name || 'that job';
+    const copy = reportClockCopy(gate.kind, openLabel);
+    const dest = gate.kind === 'other' && openJob ? openJob : job;
+    Alert.alert(copy.title, copy.body || undefined, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: copy.confirm, onPress: () => goClock(dest) },
+    ]);
   };
 
   return (
@@ -301,18 +329,19 @@ export default function HomeScreen({ navigation, userName }) {
         </View>
 
         <Text style={styles.sectionTitle}>TODAY</Text>
-        {weekJobs.length === 0 ? (
+        {todayJobs.length === 0 ? (
           <Text style={styles.emptyText}>No jobs on the board this week</Text>
-        ) : weekJobs.map((job) => {
+        ) : todayJobs.map((job) => {
           const id = String(job.id);
           const num = jobNumber(job);
           const trip = tripLine(tripsByJob.get(id), today, monday, sunday);
           const priorCount = priorCountByJob.get(id) || 0;
-          const sow = sowLineForJob(wtcsByJob.get(id), tripsByJob.get(id), today, priorCount);
-          const types = logsByJobDate.get(`${id}|${today}`) || new Set();
-          const report = reportsByJobDate.get(`${id}|${today}`);
+          const dutyDate = String(job.id) === onJobId ? workDate : today;
+          const types = logsByJobDate.get(`${id}|${dutyDate}`) || new Set();
+          const report = reportsByJobDate.get(`${id}|${dutyDate}`);
           const prtDone = report && (report.status === 'submitted' || report.status === 'approved');
-          const clockIn = clockInByJob.get(id) || null;
+          const clockIn = String(job.id) === onJobId ? openPunch.punch_time : null;
+          const sow = sowLineForJob(wtcsByJob.get(id), tripsByJob.get(id), dutyDate, priorCount);
           const items = [
             ...DUTY_LOGS.map((d) => ({
               ...d,
@@ -341,13 +370,19 @@ export default function HomeScreen({ navigation, userName }) {
             },
           ];
           const allDone = items.every((it) => it.done);
+          const isThisJob = onJobId && String(job.id) === onJobId;
 
           return (
-            <View key={job.id} style={[styles.todayCard, allDone && styles.todayCardDone]}>
+            <View key={job.id} style={[styles.todayCard, allDone && styles.todayCardDone, isThisJob && styles.todayCardOn]}>
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={() => navigation.navigate('JobMenu', { jobId: job.id, jobName: job.job_name })}
               >
+                {isThisJob ? (
+                  <View style={styles.thisJobPill}>
+                    <Text style={styles.thisJobText}>THIS JOB</Text>
+                  </View>
+                ) : null}
                 {num ? <Text style={styles.todayJobNum}>{num}</Text> : null}
                 <Text style={styles.todayJobName} numberOfLines={2}>{job.job_name}</Text>
                 {trip ? <Text style={styles.todayTrip}>{trip}</Text> : null}
@@ -395,11 +430,11 @@ export default function HomeScreen({ navigation, userName }) {
                 ))}
               </View>
 
-              {allDone ? (
+              {allDone && isThisJob ? (
                 <Text style={styles.pride}>DAY COMPLETE — THAT’S THE WORK</Text>
-              ) : (
+              ) : isThisJob ? (
                 <Text style={styles.prideHint}>Clock-out waits until these are in.</Text>
-              )}
+              ) : null}
             </View>
           );
         })}
@@ -449,6 +484,12 @@ const styles = StyleSheet.create({
 
   todayCard: { backgroundColor: C.linenCard, borderRadius: 12, padding: S.md, borderWidth: 1, borderColor: C.borderStrong, marginBottom: S.md },
   todayCardDone: { borderColor: C.tealDark },
+  todayCardOn: { borderColor: C.teal, borderWidth: 2 },
+  thisJobPill: {
+    alignSelf: 'flex-start', backgroundColor: C.dark, borderRadius: 6,
+    paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
+  },
+  thisJobText: { fontFamily: F.display, fontSize: 11, color: C.teal, letterSpacing: 1.5 },
   todayJobNum: { fontFamily: F.display, fontSize: 28, color: C.textHead, letterSpacing: 1 },
   todayJobName: { fontFamily: F.display, fontSize: 15, color: C.textBody, textTransform: 'uppercase', letterSpacing: 0.5 },
   todayTrip: { fontFamily: F.displayMed, fontSize: 13, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2 },

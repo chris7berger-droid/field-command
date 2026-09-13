@@ -24,9 +24,9 @@ export default function JobDetailScreen({ route, navigation, user }) {
   if (tab === 'Tasks') {
     body = <TasksTab jobId={jobId} employeeId={employeeId} employeeName={user?.name || ''} />;
   } else if (tab === 'Report') {
-    body = <ReportTab jobId={jobId} employeeId={employeeId} />;
+    body = <ReportTab jobId={jobId} employeeId={employeeId} jobName={jobName} navigation={navigation} />;
   } else {
-    body = <TimeClockTab jobId={jobId} jobName={jobName} employeeId={employeeId} />;
+    body = <TimeClockTab jobId={jobId} jobName={jobName} employeeId={employeeId} navigation={navigation} />;
   }
 
   return (
