@@ -1,11 +1,25 @@
 ---
-description: End-of-session wrap — handoff, commit, branch cleanup, push, and a clear safe-to-close check without being asked
+description: End-of-session wrap — offer wrap at three-quarters full, then handoff, commit, branch cleanup, push, and a clear safe-to-close check without being asked
 alwaysApply: true
 ---
 
 # Session wrap
 
 When Chris wraps a slice — “wrap”, “merge”, “new session”, “done for now”, “go” after a wrap offer, or you judge the slice complete — **do the close-out. Do not wait to be asked** for a handoff, commit, push, branch cleanup, or a safe-to-close check.
+
+## Chat about three-quarters full
+
+Cursor shows how full this chat is. When that meter hits **about three-quarters (~75%)**, treat it as a wrap trigger — wrap *before* the chat dies.
+
+1. Stop adding new work. Do not start another slice.
+2. Offer wrap **once** in this chat (do not repeat it every message).
+3. Say this, in plain English — no token counts:
+
+   This chat is about three-quarters full — good time to wrap. Want me to close it out now?
+
+4. If Chris says wrap / go / yes / merge / done for now, run the close-out below immediately.
+
+If he says keep going, do not nag. Still run the close-out later if he wraps, or if you judge the slice complete.
 
 ## Close-out (in order)
 
