@@ -17,14 +17,24 @@ const TITLES = {
 };
 
 export default function JobDetailScreen({ route, navigation, user }) {
-  const { jobId, jobName, tab = 'TimeClock' } = route.params;
+  const { jobId, jobName, tab = 'TimeClock', reportSection, logType } = route.params;
   const employeeId = user?.id || '';
 
   let body = null;
   if (tab === 'Tasks') {
     body = <TasksTab jobId={jobId} employeeId={employeeId} employeeName={user?.name || ''} />;
   } else if (tab === 'Report') {
-    body = <ReportTab jobId={jobId} employeeId={employeeId} jobName={jobName} navigation={navigation} />;
+    body = (
+      <ReportTab
+        key={`${reportSection || 'prt'}-${logType || ''}`}
+        jobId={jobId}
+        employeeId={employeeId}
+        jobName={jobName}
+        navigation={navigation}
+        initialSection={reportSection}
+        initialLogType={logType}
+      />
+    );
   } else {
     body = <TimeClockTab jobId={jobId} jobName={jobName} employeeId={employeeId} navigation={navigation} />;
   }

@@ -63,7 +63,6 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
   const [shiftStart, setShiftStart] = useState(null);
   const [lunchStart, setLunchStart] = useState(null);
   const [lunchRemaining, setLunchRemaining] = useState(0);
-  const [isOnSite, setIsOnSite] = useState(true);
   const [gpsDistance, setGpsDistance] = useState(0);
   const [weather, setWeather] = useState(null);
   const [demoMode, setDemoMode] = useState(false);
@@ -212,7 +211,6 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
       position = await getCurrentPosition(); // throws if denied
     }
     const geo = checkGeofence(position, job);
-    setIsOnSite(geo.onSite);
     setGpsDistance(geo.distanceMeters);
     const weatherData = await fetchWeather(position.latitude, position.longitude);
     if (weatherData) setWeather(weatherData);
@@ -334,10 +332,33 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     if (pendingAction.current) { pendingAction.current(); pendingAction.current = null; }
   }, []);
 
+  const punchNum = jobNumber(job);
+  const findOtherJob = () => {
+    navigation?.reset({
+      index: 1,
+      routes: [
+        { name: 'Home' },
+        { name: 'JobList', params: { pickFor: 'TimeClock' } },
+      ],
+    });
+  };
+  const punchInto = (
+    <View style={styles.punchInto}>
+      <Text style={styles.punchIntoKicker}>
+        {punchNum ? 'YOU ARE PUNCHING INTO JOB NUMBER' : 'YOU ARE PUNCHING INTO'}
+      </Text>
+      <Text style={styles.punchIntoNum}>{punchNum || jobName || 'THIS JOB'}</Text>
+      <TouchableOpacity style={styles.chooseJobBtn} activeOpacity={0.7} onPress={findOtherJob}>
+        <Text style={styles.chooseJobText}>CHOOSE A DIFFERENT JOB</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
   // ── Render: vehicle choice (PW only) ──────────────────
   if (isPW && companyVehicle === null && punchHistory.length === 0) {
     return (
       <LinenBackground style={styles.screen}>
+        <View style={styles.punchIntoWrap}>{punchInto}</View>
         <View style={styles.choiceContainer}>
           <Text style={styles.choiceTitle}>PREVAILING WAGE JOB</Text>
           <Text style={styles.choiceBody}>How are you getting to the job site today?</Text>
@@ -363,6 +384,8 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
   return (
     <LinenBackground>
     <ScrollView style={styles.screenTransparent} contentContainerStyle={styles.content}>
+      {punchInto}
+
       {/* Live Clock */}
       <View style={styles.clockContainer}>
         <Text style={styles.liveTime}>
@@ -371,27 +394,25 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
         {shiftStart && <Text style={styles.elapsed}>SHIFT: {elapsedStr}</Text>}
       </View>
 
-      {/* Status Row */}
-      <View style={styles.statusRow}>
-        {weather && (
-          <View style={styles.statusChip}>
-            <Text style={styles.statusText}>{weather.temp_f}°F · {weather.condition}</Text>
-          </View>
-        )}
-        {isPW && (
-          <View style={[styles.statusChip, { backgroundColor: '#5b21b6' }]}>
-            <Text style={styles.statusText}>PREVAILING WAGE</Text>
-          </View>
-        )}
-        {isPW && companyVehicle && (
-          <View style={styles.statusChip}>
-            <Text style={styles.statusText}>COMPANY VEHICLE</Text>
-          </View>
-        )}
-        <View style={[styles.statusChip, { backgroundColor: isOnSite ? C.tealDeep : '#7f1d1d' }]}>
-          <Text style={styles.statusText}>{isOnSite ? 'ON SITE' : `OFF SITE · ${gpsDistance}m`}</Text>
+      {(weather || isPW) ? (
+        <View style={styles.statusRow}>
+          {weather && (
+            <View style={styles.statusChip}>
+              <Text style={styles.statusText}>{weather.temp_f}°F · {weather.condition}</Text>
+            </View>
+          )}
+          {isPW && (
+            <View style={[styles.statusChip, { backgroundColor: '#5b21b6' }]}>
+              <Text style={styles.statusText}>PREVAILING WAGE</Text>
+            </View>
+          )}
+          {isPW && companyVehicle && (
+            <View style={styles.statusChip}>
+              <Text style={styles.statusText}>COMPANY VEHICLE</Text>
+            </View>
+          )}
         </View>
-      </View>
+      ) : null}
 
       {/* Step Progress */}
       <View style={styles.progressRow}>
@@ -573,6 +594,28 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.linen },
   screenTransparent: { flex: 1, backgroundColor: 'transparent' },
   content: { padding: S.md, paddingBottom: S.xxl },
+
+  punchIntoWrap: { paddingHorizontal: S.md, paddingTop: S.md },
+  punchInto: {
+    backgroundColor: C.dark, borderRadius: 12,
+    paddingVertical: 14, paddingHorizontal: S.md,
+    marginBottom: S.md, alignItems: 'center',
+  },
+  punchIntoKicker: {
+    fontFamily: F.display, fontSize: 12, color: C.textFaint,
+    letterSpacing: 1.5, textAlign: 'center',
+  },
+  punchIntoNum: {
+    fontFamily: F.display, fontSize: 36, color: C.teal,
+    letterSpacing: 1, marginTop: 4, marginBottom: 12,
+  },
+  chooseJobBtn: {
+    alignSelf: 'stretch', backgroundColor: C.linenCard, borderRadius: 8,
+    paddingVertical: 12, alignItems: 'center',
+  },
+  chooseJobText: {
+    fontFamily: F.display, fontSize: 16, color: C.textHead, letterSpacing: 1.5,
+  },
 
   choiceContainer: { flex: 1, justifyContent: 'center', padding: S.lg },
   choiceTitle: { fontFamily: F.display, fontSize: 24, color: C.textHead, letterSpacing: 2, textAlign: 'center', marginBottom: S.xs },

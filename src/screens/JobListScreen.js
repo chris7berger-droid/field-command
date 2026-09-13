@@ -28,7 +28,8 @@ function weekMonSun() {
   return { monday, sunday: addDaysYmd(monday, 6) };
 }
 
-export default function JobListScreen({ navigation, user }) {
+export default function JobListScreen({ navigation, route, user }) {
+  const pickClock = route?.params?.pickFor === 'TimeClock';
   const status = useStatus();
   const { monday, sunday } = weekMonSun();
   const { data: jobs, isLoading } = useQuery(
@@ -96,7 +97,7 @@ export default function JobListScreen({ navigation, user }) {
         <TouchableOpacity onPress={() => navigation.goBack()} activeOpacity={0.7}>
           <Text style={styles.backBtn}>{'< HOME'}</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>FIELD COMMAND</Text>
+        <Text style={styles.headerTitle}>{pickClock ? 'PICK A JOB' : 'FIELD COMMAND'}</Text>
         <View style={styles.syncRow}>
           <View
             style={[
@@ -123,6 +124,9 @@ export default function JobListScreen({ navigation, user }) {
           data={listedJobs}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
+          ListHeaderComponent={pickClock ? (
+            <Text style={styles.pickHint}>Choose the job you want to punch into.</Text>
+          ) : null}
           renderItem={({ item }) => {
             const num = jobNumber(item);
             const trip = tripLine(tripsByJob.get(String(item.id)), today, monday, sunday);
@@ -131,11 +135,17 @@ export default function JobListScreen({ navigation, user }) {
               style={styles.card}
               activeOpacity={0.7}
               onPress={() =>
-                navigation.navigate('JobMenu', {
-                  jobId: item.id,
-                  jobName: item.job_name,
-                  from: 'list',
-                })
+                pickClock
+                  ? navigation.navigate('JobDetail', {
+                      jobId: item.id,
+                      jobName: item.job_name,
+                      tab: 'TimeClock',
+                    })
+                  : navigation.navigate('JobMenu', {
+                      jobId: item.id,
+                      jobName: item.job_name,
+                      from: 'list',
+                    })
               }
             >
               <View style={styles.cardTop}>
@@ -176,6 +186,10 @@ const styles = StyleSheet.create({
   syncDot: { width: 8, height: 8, borderRadius: 4 },
   syncText: { fontFamily: F.bodyMed, fontSize: 12, color: C.white },
   list: { padding: S.md },
+  pickHint: {
+    fontFamily: F.bodyMed, fontSize: 14, color: C.textBody,
+    marginBottom: S.md, textAlign: 'center',
+  },
   card: {
     backgroundColor: C.linenCard, borderRadius: 10, padding: S.md,
     borderWidth: 1, borderColor: C.borderStrong, marginBottom: S.sm,

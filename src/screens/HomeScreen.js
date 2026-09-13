@@ -294,13 +294,16 @@ export default function HomeScreen({ navigation, userName }) {
     });
   };
 
-  const goReports = (job) => {
+  const goDuty = (job, dutyKey) => {
     const gate = reportClockGate(job.id, weekPunches == null ? null : weekPunches);
     if (gate.allowed) {
+      const isLog = dutyKey === 'SOD' || dutyKey === 'MOD' || dutyKey === 'EOD';
       navigation.navigate('JobDetail', {
         jobId: job.id,
         jobName: job.job_name,
         tab: 'Report',
+        reportSection: isLog ? 'log' : 'prt',
+        logType: isLog ? dutyKey : undefined,
       });
       return;
     }
@@ -426,13 +429,22 @@ export default function HomeScreen({ navigation, userName }) {
 
           return (
             <View key={job.id} style={[styles.todayCard, allDone && styles.todayCardDone, isThisJob && styles.todayCardOn]}>
+              {isThisJob ? (
+                <View style={styles.thisJobPill}>
+                  <Text style={styles.thisJobText}>THIS JOB</Text>
+                </View>
+              ) : null}
+              <View style={styles.todayHeadRow}>
+                {num ? <Text style={styles.todayJobNum}>{num}</Text> : <View style={styles.todayJobNumSpacer} />}
+                <TouchableOpacity
+                  style={styles.openJobBtn}
+                  activeOpacity={0.7}
+                  onPress={() => goMenu(job)}
+                >
+                  <Text style={styles.openJobText}>OPEN JOB</Text>
+                </TouchableOpacity>
+              </View>
               <TouchableOpacity activeOpacity={0.7} onPress={() => goMenu(job)}>
-                {isThisJob ? (
-                  <View style={styles.thisJobPill}>
-                    <Text style={styles.thisJobText}>THIS JOB</Text>
-                  </View>
-                ) : null}
-                {num ? <Text style={styles.todayJobNum}>{num}</Text> : null}
                 <Text style={styles.todayJobName} numberOfLines={2}>{job.job_name}</Text>
                 {trip ? <Text style={styles.todayTrip}>{trip}</Text> : null}
                 {crew ? <Text style={styles.todayCrew}>{crew}</Text> : null}
@@ -442,14 +454,6 @@ export default function HomeScreen({ navigation, userName }) {
                     {sow.target != null ? `  ·  TARGET ${sow.target}%` : ''}
                   </Text>
                 ) : null}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.openJobBtn}
-                activeOpacity={0.7}
-                onPress={() => goMenu(job)}
-              >
-                <Text style={styles.openJobText}>OPEN JOB</Text>
               </TouchableOpacity>
 
               <View style={styles.dutyList}>
@@ -462,7 +466,7 @@ export default function HomeScreen({ navigation, userName }) {
                       it.state === 'due' && styles.dutyRowDue,
                     ]}
                     activeOpacity={0.7}
-                    onPress={() => goReports(job)}
+                    onPress={() => goDuty(job, it.key)}
                   >
                     <View style={[
                       styles.dutyLamp,
@@ -558,16 +562,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
   },
   thisJobText: { fontFamily: F.display, fontSize: 11, color: C.teal, letterSpacing: 1.5 },
-  todayJobNum: { fontFamily: F.display, fontSize: 28, color: C.textHead, letterSpacing: 1 },
+  todayHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  todayJobNum: { flex: 1, fontFamily: F.display, fontSize: 28, color: C.textHead, letterSpacing: 1 },
+  todayJobNumSpacer: { flex: 1 },
   todayJobName: { fontFamily: F.display, fontSize: 15, color: C.textBody, textTransform: 'uppercase', letterSpacing: 0.5 },
   todayTrip: { fontFamily: F.displayMed, fontSize: 13, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2 },
   todayCrew: { fontFamily: F.bodyMed, fontSize: 13, color: C.textBody, marginTop: 4 },
   todaySow: { fontFamily: F.bodyMed, fontSize: 13, color: C.textMuted, marginTop: 6, marginBottom: S.sm },
   openJobBtn: {
-    backgroundColor: C.dark, borderRadius: 8, paddingVertical: 14,
-    alignItems: 'center', marginTop: S.sm, marginBottom: 2,
+    backgroundColor: C.dark, borderRadius: 6,
+    paddingHorizontal: 10, paddingVertical: 5,
   },
-  openJobText: { fontFamily: F.display, fontSize: 16, color: C.teal, letterSpacing: 2 },
+  openJobText: { fontFamily: F.display, fontSize: 12, color: C.teal, letterSpacing: 1.5 },
 
   dutyList: { gap: 6, marginTop: S.sm },
   dutyRow: {

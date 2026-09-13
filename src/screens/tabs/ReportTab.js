@@ -145,10 +145,10 @@ function prtRung(pctToday, targetPct) {
   return PRT_RUNGS.nearZero;
 }
 
-export default function ReportTab({ jobId, employeeId, jobName, navigation }) {
+export default function ReportTab({ jobId, employeeId, jobName, navigation, initialSection, initialLogType }) {
   const db = usePowerSync();
   const today = tod();
-  const [section, setSection] = useState('prt'); // 'prt' | 'log'
+  const [section, setSection] = useState(initialSection === 'log' ? 'log' : 'prt'); // 'prt' | 'log'
 
   // Same SOW source as the Field SOW tab: canonical job_wtcs, then the
   // jobs.field_sow mirror. Do not read proposal_wtc — that LIMIT 10 → [0]
@@ -276,7 +276,11 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation }) {
     return new Set((logEntries || []).map(e => e.entry_type));
   }, [logEntries]);
 
-  const [logType, setLogType] = useState(null); // which log entry is being composed
+  const [logType, setLogType] = useState(
+    initialLogType === 'SOD' || initialLogType === 'MOD' || initialLogType === 'EOD' || initialLogType === 'OTHER'
+      ? initialLogType
+      : null
+  );
   const [logPhotos, setLogPhotos] = useState([]);
   const [logNotes, setLogNotes] = useState('');
   const [logSubmitting, setLogSubmitting] = useState(false);
@@ -285,13 +289,12 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation }) {
   const pickPhoto = useCallback(async (setter) => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') { Alert.alert('Permission needed', 'Photo library access is required.'); return; }
-    // Single-select uses the older iOS picker, which dismisses. Multi-select
-    // opens PHPicker (the Photos/Collections sheet) which can stick open on
-    // iOS 26 / Simulator. Crew taps FROM LIBRARY again to add more.
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       quality: 0.7,
-      allowsMultipleSelection: false,
+      allowsMultipleSelection: true,
+      selectionLimit: 0,
+      orderedSelection: true,
       presentationStyle: ImagePicker.UIImagePickerPresentationStyle.FULL_SCREEN,
     });
     if (!result.canceled && result.assets) setter((prev) => [...prev, ...result.assets.map((a) => a.uri)]);
@@ -655,7 +658,11 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation }) {
                     <Text style={styles.photoBtnText}>FROM LIBRARY</Text>
                   </TouchableOpacity>
                 </View>
-                {logPhotos.length > 0 && <Text style={styles.photoHint}>Long-press a photo to remove</Text>}
+                <Text style={styles.photoHint}>
+                  {logPhotos.length > 0
+                    ? 'Pick several at once. Long-press a photo to remove.'
+                    : 'Pick several photos at once from the library.'}
+                </Text>
 
                 <TextInput
                   style={styles.logNoteInput}
