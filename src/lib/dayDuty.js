@@ -39,3 +39,14 @@ export function missingClockOutDuties({ logTypes, prtSubmitted }) {
   if (!prtSubmitted) missing.push('production report');
   return missing;
 }
+
+// Dated-today wins. Otherwise the next production day: how many PRTs already
+// went in, matching office day-count.
+export function pickSowDaysForPrt(days, today, submittedPriorCount) {
+  const list = days || [];
+  const datedToday = list.filter((d) => d.date && d.date === today);
+  if (datedToday.length > 0) return datedToday;
+  if (list.length === 0) return [];
+  const idx = Math.min(Math.max(submittedPriorCount, 0), list.length - 1);
+  return [list[idx]];
+}

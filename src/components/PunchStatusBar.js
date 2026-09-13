@@ -44,13 +44,13 @@ export default function PunchStatusBar() {
 
   // Query all daily log entries for today (across all jobs)
   const { data: logEntries } = useQuery(
-    `SELECT entry_type FROM daily_log_entries WHERE created_at >= ?`,
+    `SELECT job_id, entry_type FROM daily_log_entries WHERE created_at >= ?`,
     [today + 'T00:00:00']
   );
 
-  // Query PRT status for today
   const { data: prtReports } = useQuery(
-    `SELECT status FROM daily_production_reports WHERE report_date = ? AND (status = 'submitted' OR status = 'approved') LIMIT 1`,
+    `SELECT job_id, status FROM daily_production_reports
+      WHERE report_date = ? AND (status = 'submitted' OR status = 'approved')`,
     [today]
   );
 
@@ -58,43 +58,69 @@ export default function PunchStatusBar() {
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.not_clocked_in;
   const isActive = status !== 'clocked_out' && status !== 'shift_done';
 
-  // Derive alerts
+  // Alerts match clock-out: SOD / MOD / EOD / PRT for the job they clocked into,
+  // not "any job today."
   const alerts = useMemo(() => {
-    const result = [];
     const punchList = punches || [];
-    if (punchList.length === 0) return result;
+    if (punchList.length === 0) return [];
 
-    const clockIn = punchList.find(p => p.punch_type === 'clock_in');
-    const clockOut = punchList.find(p => p.punch_type === 'clock_out');
-    if (!clockIn) return result;
+    const logsByJob = new Map();
+    for (const e of (logEntries || [])) {
+      const id = String(e.job_id);
+      if (!logsByJob.has(id)) logsByJob.set(id, new Set());
+      logsByJob.get(id).add(e.entry_type);
+    }
+    const prtByJob = new Set(
+      (prtReports || []).map((r) => String(r.job_id))
+    );
 
-    const clockInTime = clockIn.punch_time;
-    const submittedTypes = new Set((logEntries || []).map(e => e.entry_type));
-    const prtDone = prtReports && prtReports.length > 0;
-
-    for (const d of DUTY_LOGS) {
-      const state = dutyState({
-        done: submittedTypes.has(d.key),
-        clockInTime,
-        now,
-        dueAfterMs: d.dueAfterMs,
-        dueHour: d.dueHour,
-      });
-      if (state !== 'due') continue;
-      if (d.key === 'SOD') result.push({ label: 'SOD LOG NEEDED', color: C.amber, bg: ALERT_AMBER });
-      if (d.key === 'MOD') result.push({ label: 'MID DAY LOG DUE', color: C.amber, bg: ALERT_AMBER });
-      if (d.key === 'EOD') result.push({ label: 'EOD LOG REQUIRED', color: '#ef4444', bg: ALERT_RED });
+    const byJob = new Map();
+    for (const p of punchList) {
+      const id = String(p.job_id);
+      if (!byJob.has(id)) byJob.set(id, []);
+      byJob.get(id).push(p);
     }
 
-    const prtState = dutyState({
-      done: prtDone,
-      clockInTime,
-      now,
-      dueAfterMs: PRT_DUTY.dueAfterMs,
-      dueHour: PRT_DUTY.dueHour,
-    });
-    if (prtState === 'due' || (clockOut && !prtDone)) {
-      result.push({ label: 'PRT NOT SUBMITTED', color: '#ef4444', bg: ALERT_RED });
+    const seen = new Set();
+    const result = [];
+    const pushAlert = (label, color, bg) => {
+      if (seen.has(label)) return;
+      seen.add(label);
+      result.push({ label, color, bg });
+    };
+
+    for (const [, list] of byJob) {
+      const clockIn = list.find((p) => p.punch_type === 'clock_in');
+      if (!clockIn) continue;
+      const clockOut = list.find((p) => p.punch_type === 'clock_out');
+      const jobId = String(clockIn.job_id);
+      const types = logsByJob.get(jobId) || new Set();
+      const prtDone = prtByJob.has(jobId);
+
+      for (const d of DUTY_LOGS) {
+        const state = dutyState({
+          done: types.has(d.key),
+          clockInTime: clockIn.punch_time,
+          now,
+          dueAfterMs: d.dueAfterMs,
+          dueHour: d.dueHour,
+        });
+        if (state !== 'due') continue;
+        if (d.key === 'SOD') pushAlert('SOD LOG NEEDED', C.amber, ALERT_AMBER);
+        if (d.key === 'MOD') pushAlert('MID DAY LOG DUE', C.amber, ALERT_AMBER);
+        if (d.key === 'EOD') pushAlert('EOD LOG REQUIRED', '#ef4444', ALERT_RED);
+      }
+
+      const prtState = dutyState({
+        done: prtDone,
+        clockInTime: clockIn.punch_time,
+        now,
+        dueAfterMs: PRT_DUTY.dueAfterMs,
+        dueHour: PRT_DUTY.dueHour,
+      });
+      if (prtState === 'due' || (clockOut && !prtDone)) {
+        pushAlert('PRT NOT SUBMITTED', '#ef4444', ALERT_RED);
+      }
     }
 
     return result;

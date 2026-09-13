@@ -12,7 +12,8 @@ import {
   LIVE_JOB_FILTER, jobNumber, tripLine, tripsByCallLog,
   collectSowDates, isActiveThisWeek,
 } from '../lib/trips';
-import { DUTY_LOGS, PRT_DUTY, dutyState } from '../lib/dayDuty';
+import { DUTY_LOGS, PRT_DUTY, dutyState, pickSowDaysForPrt } from '../lib/dayDuty';
+import { mergeDaysByDate } from './tabs/TasksTab';
 import LinenBackground from '../components/LinenBackground';
 
 function getMonday() {
@@ -33,20 +34,24 @@ function getWeekDates(monday) {
   return Array.from({ length: 7 }, (_, i) => addDaysYmd(monday, i));
 }
 
-function sowLineForJob(wtcRows, today, priorPrtCount) {
-  const days = [];
+function sowLineForJob(wtcRows, trips, today, priorPrtCount) {
+  const tagged = [];
   for (const w of (wtcRows || [])) {
-    for (const d of parseJSON(w.field_sow, [])) days.push(d);
+    for (const d of parseJSON(w.field_sow, [])) {
+      tagged.push({ ...d, work_type_name: w.work_type_name });
+    }
   }
-  if (days.length === 0) return null;
-  const datedToday = days.filter((d) => d.date && d.date === today);
-  const day = datedToday[0] || days[Math.min(Math.max(priorPrtCount, 0), days.length - 1)];
+  if (tagged.length === 0) return null;
+  const { days } = mergeDaysByDate(tagged, trips);
+  const prtDays = pickSowDaysForPrt(days, today, priorPrtCount);
+  if (prtDays.length === 0) return null;
+  const day = prtDays[0];
   const idx = Math.max(1, days.indexOf(day) + 1);
-  const tasks = (day.tasks || []).filter((t) => (t.description || '').trim());
-  const names = tasks.map((t) => t.description.trim()).join(' · ');
+  const tasks = prtDays.flatMap((d) => (d.tasks || []).filter((t) => (t.description || '').trim()));
+  const names = [...new Set(tasks.map((t) => t.description.trim()))].join(' · ');
   const target = tasks.length === 1 ? Number(tasks[0].pct_complete) || null : null;
   return {
-    label: day.day_label || `Day ${idx}`,
+    label: day.label || day.day_label || `Day ${idx}`,
     idx,
     total: days.length,
     names: names || null,
@@ -97,7 +102,7 @@ export default function HomeScreen({ navigation, userName }) {
   );
 
   const { data: wtcTripRows } = useQuery(
-    `SELECT j.call_log_id AS call_log_id, jwt.field_sow
+    `SELECT j.call_log_id AS call_log_id, jwt.field_sow, jwt.work_type_name
        FROM job_wtcs jwt
        INNER JOIN jobs j ON j.id = jwt.job_id
       WHERE ${LIVE_JOB_FILTER}`
@@ -280,7 +285,7 @@ export default function HomeScreen({ navigation, userName }) {
             && r.report_date !== today
             && (r.status === 'submitted' || r.status === 'approved')
           ).length;
-          const sow = sowLineForJob(wtcsByJob.get(id), today, priorCount);
+          const sow = sowLineForJob(wtcsByJob.get(id), tripsByJob.get(id), today, priorCount);
           const types = logsByJobDate.get(`${id}|${today}`) || new Set();
           const report = reportsByJobDate.get(`${id}|${today}`);
           const prtDone = report && (report.status === 'submitted' || report.status === 'approved');

@@ -20,6 +20,7 @@ import { parseJSON, parseJSONArray, tod } from '../../lib/utils';
 import { uploadPhotos } from '../../lib/photos';
 import LinenBackground from '../../components/LinenBackground';
 import { mergeDaysByDate } from './TasksTab';
+import { pickSowDaysForPrt } from '../../lib/dayDuty';
 
 const LOG_TYPES = [
   { key: 'SOD', label: 'START OF DAY', hint: 'Photos of job site at start' },
@@ -51,17 +52,6 @@ function uniqueTasksByDescription(tasks) {
     if (!out.find((ex) => ex.description === t.description)) out.push(t);
   }
   return out;
-}
-
-// Dated-today wins (crew is looking at that SOW day). Otherwise the next
-// production day: how many PRTs already went in, matching office day-count.
-function pickSowDaysForPrt(days, today, submittedPriorCount) {
-  const list = days || [];
-  const datedToday = list.filter((d) => d.date && d.date === today);
-  if (datedToday.length > 0) return datedToday;
-  if (list.length === 0) return [];
-  const idx = Math.min(Math.max(submittedPriorCount, 0), list.length - 1);
-  return [list[idx]];
 }
 
 function seedTaskEntries(source, saved, local) {
