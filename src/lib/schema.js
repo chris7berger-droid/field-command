@@ -6,10 +6,13 @@
  *   - proposal_wtc    — WTC data including field_sow
  *   - team_members    — crew roster
  *   - job_crew        — crew-to-job assignments (drives per-user sync filtering)
+ *   - job_mobilizations — Schedule trips (seq + label); Field reads titles only
  *
  * Read-write tables (written locally, synced up to Supabase):
  *   - time_punches          — clock in/out, lunch, drive time
  *   - daily_production_reports — end-of-shift submission by job lead
+ *   - daily_log_entries     — SOD/MOD/EOD notes + photos
+ *   - job_material_checks   — load-out confirmations
  *
  * Column types here must match the actual Supabase schema.
  */
@@ -275,6 +278,23 @@ const daily_log_entries = new Table(
   { indexes: { by_job_date: ['job_id', 'created_at'] } }
 );
 
+// job_mobilizations — Schedule trips. Read-only. seq is the wire key stamped
+// onto Field SOW days as mobilization_seq; label is the crew-facing trip name.
+const job_mobilizations = new Table(
+  {
+    job_id:             column.integer,
+    seq:                column.integer,
+    label:              column.text,
+    start_date:         column.text,
+    end_date:           column.text,
+    is_go_back:         column.integer, // boolean
+    note:               column.text,
+    created_at:         column.text,
+    updated_at:         column.text,
+  },
+  { indexes: { by_job: ['job_id'] } }
+);
+
 // job_material_checks — crew "material loaded in truck" confirmations.
 // Written locally by the crew, synced up. tenant_id is filled by the DB default
 // (get_user_tenant_id()) on insert — omitted here like the other writable tables.
@@ -302,6 +322,7 @@ export const AppSchema = new Schema({
   job_crew,
   jobs,
   job_wtcs,
+  job_mobilizations,
   time_punches,
   daily_production_reports,
   daily_log_entries,

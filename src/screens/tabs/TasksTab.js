@@ -3,10 +3,9 @@
  *
  * Primary read: job_wtcs (synced via PowerSync) — the canonical, dated, per-WTC
  * SOW. One row per WTC sent to Schedule; each row's field_sow is an array of
- * day objects. We gather ALL of a job's WTCs and merge their days into one
- * calendar-date-centric view (F3): days that share a calendar date collapse
- * into one group (tasks/materials concatenated, crew MAX, hours SUM), undated
- * days trail as "Day N (TBD)".
+ * day objects. Days that share a calendar date AND the same trip (mobilization_seq)
+ * collapse into one group (F3). Two trips on the same date stay separate.
+ * Undated days trail as "Day N (TBD)". Trip titles come from job_mobilizations.
  *
  * Legacy fallback: jobs.field_sow mirror, for pre-vertical jobs that have no
  * job_wtcs rows. The old proposal_wtc fallback is removed — it was an unjoined
@@ -19,6 +18,7 @@ import {
 import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
 import { parseJSON, fmtPct, fmtDayLabel } from '../../lib/utils';
+import { tripSeq, tripTitle } from '../../lib/trips';
 import LinenBackground from '../../components/LinenBackground';
 
 // Local uuid (PowerSync row ids are client-generated v4 uuids).
@@ -29,12 +29,19 @@ function generateId() {
   });
 }
 
-// Merge per-WTC day arrays into calendar-date groups (F3 spec).
-//   taggedDays: day objects each carrying a `work_type_name` (its source WTC).
-// Returns { days: [mergedDay], allTbd }. A mergedDay is:
-//   { key, label, date|null, isTbd, crew_count, hours_planned, tasks[], materials[] }
-// Each task keeps a `work_type_name` tag so the merged list still shows its trade.
-export function mergeDaysByDate(taggedDays) {
+function tripGroupKey(day) {
+  const seq = tripSeq(day);
+  return seq == null ? 'none' : String(seq);
+}
+
+export { tripTitle };
+
+// Merge per-WTC day arrays. Same calendar date + same trip collapse (F3).
+// Different trips on the same date stay distinct — that is the Schedule trips
+// contract Field must honor. taggedDays each carry a `work_type_name`.
+// `trips` is optional job_mobilizations rows so same-date pills can show TAP/Sing.
+// Returns { days: [mergedDay], allTbd }.
+export function mergeDaysByDate(taggedDays, trips) {
   const dated = [];
   const undated = [];
   for (const day of taggedDays) {
@@ -43,17 +50,38 @@ export function mergeDaysByDate(taggedDays) {
   }
   const allTbd = dated.length === 0;
 
-  // Group dated days by ISO date; ISO strings sort chronologically.
-  const byDate = new Map();
+  const byDateTrip = new Map();
   for (const day of dated) {
-    if (!byDate.has(day.date)) byDate.set(day.date, []);
-    byDate.get(day.date).push(day);
+    const key = `${day.date}::${tripGroupKey(day)}`;
+    if (!byDateTrip.has(key)) byDateTrip.set(key, []);
+    byDateTrip.get(key).push(day);
   }
 
   const merged = [];
-  for (const date of [...byDate.keys()].sort()) {
-    merged.push(buildMergedDay(byDate.get(date), {
-      key: `d-${date}`, date, label: fmtDayLabel(date), isTbd: false,
+  const datedKeys = [...byDateTrip.keys()].sort((a, b) => {
+    const [dateA, seqA] = a.split('::');
+    const [dateB, seqB] = b.split('::');
+    if (dateA !== dateB) return dateA < dateB ? -1 : 1;
+    if (seqA === 'none') return seqB === 'none' ? 0 : 1;
+    if (seqB === 'none') return -1;
+    return Number(seqA) - Number(seqB);
+  });
+  const dateCounts = new Map();
+  for (const key of datedKeys) {
+    const date = byDateTrip.get(key)[0].date;
+    dateCounts.set(date, (dateCounts.get(date) || 0) + 1);
+  }
+  for (const key of datedKeys) {
+    const group = byDateTrip.get(key);
+    const date = group[0].date;
+    let label = fmtDayLabel(date);
+    // Same calendar date, different trips: pills must not be identical.
+    if ((dateCounts.get(date) || 0) > 1) {
+      const name = tripTitle(tripSeq(group[0]), trips);
+      if (name) label = `${label} · ${name}`;
+    }
+    merged.push(buildMergedDay(group, {
+      key: `d-${key}`, date, label, isTbd: false,
     }));
   }
 
@@ -104,6 +132,12 @@ function buildMergedDay(group, meta) {
   };
 }
 
+// Live Schedule job for this call_log. Prefer the newest live row so a deleted
+// predecessor (same call_log_id) cannot steal the SOW / trip lookup.
+// Live = Schedule contract: jobs.deleted is TEXT ('No'/'Yes'), not deleted_at.
+const LIVE_JOB_FILTER = `(deleted IS NULL OR deleted = 'No')`;
+const LIVE_JOB_SQL = `(SELECT id FROM jobs WHERE call_log_id = ? AND ${LIVE_JOB_FILTER} ORDER BY id DESC LIMIT 1)`;
+
 export default function TasksTab({ jobId, employeeId, employeeName }) {
   const db = usePowerSync();
 
@@ -111,14 +145,23 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
   // Field-local jobs.id (jobs syncs `job_id AS id`), so resolve it via call_log_id.
   const { data: wtcRows, isLoading: wtcLoading } = useQuery(
     `SELECT field_sow, work_type_name FROM job_wtcs
-      WHERE job_id = (SELECT id FROM jobs WHERE call_log_id = ?)
+      WHERE job_id = ${LIVE_JOB_SQL}
       ORDER BY position`,
     [jobId]
   );
 
   // Legacy fallback: jobs.field_sow mirror for pre-vertical jobs with no job_wtcs.
   const { data: jobRows, isLoading: jobsLoading } = useQuery(
-    `SELECT field_sow, size, size_unit FROM jobs WHERE call_log_id = ? LIMIT 1`,
+    `SELECT field_sow, size, size_unit FROM jobs
+      WHERE call_log_id = ? AND ${LIVE_JOB_FILTER}
+      ORDER BY id DESC LIMIT 1`,
+    [jobId]
+  );
+
+  const { data: tripRows } = useQuery(
+    `SELECT seq, label FROM job_mobilizations
+      WHERE job_id = ${LIVE_JOB_SQL}
+      ORDER BY seq`,
     [jobId]
   );
 
@@ -141,15 +184,15 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
           tagged.push({ ...day, work_type_name: w.work_type_name });
         }
       }
-      return mergeDaysByDate(tagged);
+      return mergeDaysByDate(tagged, tripRows);
     }
     // Legacy: single jobs.field_sow array, no work-type tag.
     if (jobRow?.field_sow) {
       const tagged = parseJSON(jobRow.field_sow, []).map((d) => ({ ...d, work_type_name: null }));
-      return mergeDaysByDate(tagged);
+      return mergeDaysByDate(tagged, tripRows);
     }
     return { days: [], allTbd: false };
-  }, [wtcRows, jobRow]);
+  }, [wtcRows, jobRow, tripRows]);
 
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
   // Which material rows are expanded to show full specs (view state only).
@@ -234,7 +277,8 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
         if (currentDay.crew_count > 0) meta.push(`${currentDay.crew_count} CREW`);
         if (hrs > 0) meta.push(`${hrsStr} HRS`);
         if (currentDay.sq_ft > 0) meta.push(`${Number(currentDay.sq_ft).toLocaleString()} SQ FT`);
-        if (currentDay.mobilization_seq) meta.push(`WTC ${currentDay.mobilization_seq}`);
+        const tripName = tripTitle(currentDay.mobilization_seq, tripRows);
+        if (tripName) meta.push(tripName.toUpperCase());
         return (
         <>
           <View style={styles.dayHeader}>

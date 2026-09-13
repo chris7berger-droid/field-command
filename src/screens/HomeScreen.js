@@ -6,43 +6,37 @@ import React, { useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { useQuery } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
-import { fmtHrs, fmtTime, tod } from '../lib/utils';
+import { fmtHrs, fmtTime, tod, addDaysYmd } from '../lib/utils';
+import {
+  LIVE_JOB_FILTER, jobNumber, tripLine, tripsByCallLog,
+  collectSowDates, isActiveThisWeek,
+} from '../lib/trips';
 import LinenBackground from '../components/LinenBackground';
 
-// Get Monday of the current week (YYYY-MM-DD)
+// Local Monday/Sunday of the current week (YYYY-MM-DD). Wall-clock only.
 function getMonday() {
-  const d = new Date();
-  const day = d.getDay(); // 0=Sun, 1=Mon...
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  const mon = new Date(d.setDate(diff));
-  return mon.toISOString().slice(0, 10);
+  const today = tod();
+  const [y, m, d] = today.split('-').map(Number);
+  const day = new Date(y, m - 1, d).getDay(); // 0=Sun
+  const offset = day === 0 ? -6 : 1 - day;
+  return addDaysYmd(today, offset);
 }
 
-// Get Sunday of the current week
-function getSunday() {
-  const d = new Date();
-  const day = d.getDay();
-  const diff = d.getDate() + (day === 0 ? 0 : 7 - day);
-  const sun = new Date(d.setDate(diff));
-  return sun.toISOString().slice(0, 10);
+function getSunday(monday) {
+  return addDaysYmd(monday, 6);
 }
 
 const DAY_LABELS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
-function getWeekDates() {
-  const mon = new Date(getMonday() + 'T00:00:00');
-  return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(mon);
-    d.setDate(mon.getDate() + i);
-    return d.toISOString().slice(0, 10);
-  });
+function getWeekDates(monday) {
+  return Array.from({ length: 7 }, (_, i) => addDaysYmd(monday, i));
 }
 
 export default function HomeScreen({ navigation, userName }) {
   const today = tod();
   const monday = getMonday();
-  const sunday = getSunday();
-  const weekDates = useMemo(() => getWeekDates(), []);
+  const sunday = getSunday(monday);
+  const weekDates = useMemo(() => getWeekDates(monday), [monday]);
   const firstName = userName ? userName.split(' ')[0] : 'Crew';
 
   const todayDate = new Date();
@@ -57,8 +51,68 @@ export default function HomeScreen({ navigation, userName }) {
 
   // ── Active jobs ──────────────────────────────────────
   const { data: jobs } = useQuery(
-    `SELECT * FROM call_log WHERE stage IN ('Scheduled', 'In Progress', 'mobilized', 'in_progress') ORDER BY date ASC`
+    `SELECT * FROM call_log WHERE stage IN ('Scheduled', 'In Progress', 'Parked', 'mobilized', 'in_progress') ORDER BY date ASC`
   );
+
+  const { data: mobRows } = useQuery(
+    `SELECT j.call_log_id AS call_log_id, jm.seq, jm.label, jm.start_date, jm.end_date
+       FROM job_mobilizations jm
+       INNER JOIN jobs j ON j.id = jm.job_id
+      WHERE ${LIVE_JOB_FILTER}
+      ORDER BY j.call_log_id, jm.seq`
+  );
+
+  const { data: wtcTripRows } = useQuery(
+    `SELECT j.call_log_id AS call_log_id, jwt.field_sow
+       FROM job_wtcs jwt
+       INNER JOIN jobs j ON j.id = jwt.job_id
+      WHERE ${LIVE_JOB_FILTER}`
+  );
+
+  const { data: liveJobRows } = useQuery(
+    `SELECT j.call_log_id AS call_log_id,
+            j.scheduled_start, j.scheduled_end, j.start_date, j.end_date
+       FROM jobs j
+      WHERE ${LIVE_JOB_FILTER}`
+  );
+
+  const tripsByJob = useMemo(
+    () => tripsByCallLog(mobRows, wtcTripRows),
+    [mobRows, wtcTripRows]
+  );
+
+  const sowDatesByJob = useMemo(
+    () => collectSowDates(wtcTripRows),
+    [wtcTripRows]
+  );
+
+  const weekJobs = useMemo(() => {
+    const liveByCl = new Map();
+    for (const row of (liveJobRows || [])) {
+      const id = String(row.call_log_id);
+      if (!liveByCl.has(id)) liveByCl.set(id, []);
+      liveByCl.get(id).push(row);
+    }
+    const punched = new Set(
+      (weekPunches || []).map((p) => String(p.job_id)).filter((id) => id && id !== 'null')
+    );
+    return (jobs || []).filter((job) => {
+      const id = String(job.id);
+      if (punched.has(id)) return true;
+      const trips = tripsByJob.get(id);
+      const sowDates = sowDatesByJob.get(id);
+      const lives = liveByCl.get(id) || [];
+      if (lives.length === 0) {
+        return isActiveThisWeek({ trips, sowDates }, monday, sunday);
+      }
+      return lives.some((row) => isActiveThisWeek({
+        trips,
+        sowDates,
+        scheduledStart: row.scheduled_start || row.start_date,
+        scheduledEnd: row.scheduled_end || row.end_date,
+      }, monday, sunday));
+    });
+  }, [jobs, liveJobRows, tripsByJob, sowDatesByJob, weekPunches, monday, sunday]);
 
   // ── This week's DPRs ────────────────────────────────
   const { data: weekReports } = useQuery(
@@ -146,8 +200,8 @@ export default function HomeScreen({ navigation, userName }) {
             <Text style={styles.dateText}>{dayOfWeek} · {dateStr}</Text>
           </View>
           <View style={styles.jobCountBadge}>
-            <Text style={styles.jobCountNum}>{jobs?.length ?? 0}</Text>
-            <Text style={styles.jobCountLabel}>{(jobs?.length ?? 0) === 1 ? 'JOB' : 'JOBS'}</Text>
+            <Text style={styles.jobCountNum}>{weekJobs.length}</Text>
+            <Text style={styles.jobCountLabel}>{weekJobs.length === 1 ? 'JOB' : 'JOBS'}</Text>
           </View>
         </View>
 
@@ -227,7 +281,10 @@ export default function HomeScreen({ navigation, userName }) {
 
         {/* Active Jobs */}
         <Text style={styles.sectionTitle}>ACTIVE JOBS</Text>
-        {(jobs || []).map((job) => (
+        {(weekJobs || []).map((job) => {
+          const num = jobNumber(job);
+          const trip = tripLine(tripsByJob.get(String(job.id)), today, monday, sunday);
+          return (
           <TouchableOpacity
             key={job.id}
             style={styles.jobCard}
@@ -235,17 +292,17 @@ export default function HomeScreen({ navigation, userName }) {
             onPress={() => navigation.navigate('JobDetail', { jobId: job.id, jobName: job.job_name })}
           >
             <View style={styles.jobCardTop}>
-              <Text style={styles.jobCardName} numberOfLines={1}>{job.job_name}</Text>
+              {num ? <Text style={styles.jobCardNumber}>{num}</Text> : <View />}
               {job.prevailing_wage === 1 && (
                 <View style={styles.pwBadge}><Text style={styles.pwText}>PW</Text></View>
               )}
             </View>
-            <Text style={styles.jobCardAddress} numberOfLines={1}>
-              {[job.jobsite_address, job.jobsite_city, job.jobsite_state].filter(Boolean).join(', ')}
-            </Text>
+            <Text style={styles.jobCardName} numberOfLines={2}>{job.job_name}</Text>
+            {trip ? <Text style={styles.jobCardTrip} numberOfLines={1}>{trip}</Text> : null}
           </TouchableOpacity>
-        ))}
-        {(!jobs || jobs.length === 0) && (
+          );
+        })}
+        {weekJobs.length === 0 && (
           <Text style={styles.emptyText}>No active jobs this week</Text>
         )}
 
@@ -349,9 +406,10 @@ const styles = StyleSheet.create({
 
   // Job Cards
   jobCard: { backgroundColor: C.linenCard, borderRadius: 10, padding: S.md, borderWidth: 1, borderColor: C.borderStrong, marginBottom: S.sm },
-  jobCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  jobCardName: { fontFamily: F.display, fontSize: 16, color: C.textHead, flex: 1, textTransform: 'uppercase', letterSpacing: 0.5 },
-  jobCardAddress: { fontFamily: F.body, fontSize: 13, color: C.textLight },
+  jobCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 },
+  jobCardNumber: { fontFamily: F.display, fontSize: 28, color: C.textHead, letterSpacing: 1, flex: 1 },
+  jobCardName: { fontFamily: F.display, fontSize: 15, color: C.textBody, textTransform: 'uppercase', letterSpacing: 0.5 },
+  jobCardTrip: { fontFamily: F.displayMed, fontSize: 13, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2 },
   pwBadge: { backgroundColor: C.pw, borderRadius: 4, paddingHorizontal: 8, paddingVertical: 2, marginLeft: 8 },
   pwText: { fontFamily: F.display, fontSize: 11, color: C.white, letterSpacing: 1 },
 

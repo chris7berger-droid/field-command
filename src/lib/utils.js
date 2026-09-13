@@ -36,9 +36,24 @@ export function fmtDayLabel(d) {
   });
 }
 
-// Today's date as YYYY-MM-DD
+// Local calendar YYYY-MM-DD. Never use toISOString() for a calendar date —
+// UTC will shift the day in the evening (PDT).
+export function localYmd(d = new Date()) {
+  const dt = d instanceof Date ? d : new Date(d);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, '0');
+  const day = String(dt.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function addDaysYmd(ymd, n) {
+  const [y, m, d] = String(ymd).split('-').map(Number);
+  return localYmd(new Date(y, m - 1, d + n));
+}
+
+// Today's date as YYYY-MM-DD (local calendar)
 export function tod() {
-  return new Date().toISOString().slice(0, 10);
+  return localYmd(new Date());
 }
 
 // Format time as "1:30 PM"

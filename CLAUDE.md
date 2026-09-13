@@ -48,7 +48,7 @@ answer those four. Full contract + open decisions:
 ## PowerSync Cloud
 - **Instance URL:** https://69d81f100e377e689729db98.powersync.journeyapps.com
 - **Dashboard:** dashboard.powersync.com, org chris7berger-droid, project Field Command
-- **Synced tables (9):** call_log, proposal_wtc, job_wtcs, team_members, job_crew, jobs, time_punches, daily_production_reports, daily_log_entries (single `all_data` bucket, no per-user filtering yet). Deployed list lives in `powersync-sync-rules.yaml`.
+- **Synced tables (11):** call_log, proposal_wtc, job_wtcs, team_members, job_crew, jobs, time_punches, daily_production_reports, daily_log_entries, job_material_checks, job_mobilizations (single `all_data` bucket, no per-user filtering yet). Deployed list lives in `powersync-sync-rules.yaml`. `job_mobilizations` is on the Field branch; it will not reach phones until the Postgres publication and PowerSync dashboard rules include it.
 - **Client Auth:** Supabase Auth with JWT secret
 - **Single-tenant** — global bucket, no per-user filtering yet
 
@@ -101,13 +101,15 @@ supabase/
 - **team_members** — crew roster
 - **job_crew** — per-job crew assignment
 - **jobs** — aliased `SELECT job_id AS id, *` in the sync rules
-- **daily_log_entries** — synced down for display (not written locally)
+- **job_mobilizations** — Schedule trips (seq + label) for Field SOW titles
+- **daily_log_entries** — synced down for display (also written locally)
 
 ### Read-write tables (written locally, synced up):
 - **time_punches** — clock in/out, lunch, drive time (indexed by job_id + punch_date)
 - **daily_production_reports** — end-of-shift submission by job lead (indexed by job_id + report_date)
+- **job_material_checks** — load-out confirmations
 
-(Upload path in `connector.js` currently pushes only `time_punches` + `daily_production_reports`.)
+(Upload path in `connector.js` currently pushes writable tables including `time_punches`, `daily_production_reports`, `daily_log_entries`, and `job_material_checks`.)
 
 ## Database Notes
 - `call_log.id` is INTEGER (not UUID)

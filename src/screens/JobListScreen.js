@@ -2,7 +2,7 @@
  * Job List Screen — Native Only
  * Shows mobilized jobs assigned to the current crew member.
  */
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   View,
   Text,
@@ -12,13 +12,35 @@ import {
 } from 'react-native';
 import { useQuery, useStatus } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
-import { fmtD } from '../lib/utils';
+import { tod } from '../lib/utils';
+import { LIVE_JOB_FILTER, jobNumber, tripLine, tripsByCallLog } from '../lib/trips';
 import LinenBackground from '../components/LinenBackground';
 
 export default function JobListScreen({ navigation, user }) {
   const status = useStatus();
   const { data: jobs, isLoading } = useQuery(
-    `SELECT * FROM call_log WHERE stage IN ('Scheduled', 'In Progress', 'mobilized', 'in_progress') ORDER BY date ASC`
+    `SELECT * FROM call_log WHERE stage IN ('Scheduled', 'In Progress', 'Parked', 'mobilized', 'in_progress') ORDER BY date ASC`
+  );
+
+  const { data: mobRows } = useQuery(
+    `SELECT j.call_log_id AS call_log_id, jm.seq, jm.label, jm.start_date, jm.end_date
+       FROM job_mobilizations jm
+       INNER JOIN jobs j ON j.id = jm.job_id
+      WHERE ${LIVE_JOB_FILTER}
+      ORDER BY j.call_log_id, jm.seq`
+  );
+
+  const { data: wtcTripRows } = useQuery(
+    `SELECT j.call_log_id AS call_log_id, jwt.field_sow
+       FROM job_wtcs jwt
+       INNER JOIN jobs j ON j.id = jwt.job_id
+      WHERE ${LIVE_JOB_FILTER}`
+  );
+
+  const today = tod();
+  const tripsByJob = useMemo(
+    () => tripsByCallLog(mobRows, wtcTripRows),
+    [mobRows, wtcTripRows]
   );
 
   return (
@@ -54,7 +76,10 @@ export default function JobListScreen({ navigation, user }) {
           data={jobs}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
-          renderItem={({ item }) => (
+          renderItem={({ item }) => {
+            const num = jobNumber(item);
+            const trip = tripLine(tripsByJob.get(String(item.id)), today);
+            return (
             <TouchableOpacity
               style={styles.card}
               activeOpacity={0.7}
@@ -66,28 +91,20 @@ export default function JobListScreen({ navigation, user }) {
               }
             >
               <View style={styles.cardTop}>
-                <Text style={styles.jobName} numberOfLines={1}>
-                  {item.job_name || 'Untitled Job'}
-                </Text>
+                {num ? <Text style={styles.jobNumber}>{num}</Text> : <View />}
                 {item.prevailing_wage === 1 && (
                   <View style={styles.pwBadge}>
                     <Text style={styles.pwText}>PW</Text>
                   </View>
                 )}
               </View>
-              {item.display_job_number ? (
-                <Text style={styles.jobNumber}>#{item.display_job_number}</Text>
-              ) : null}
-              <Text style={styles.address} numberOfLines={1}>
-                {[item.jobsite_address, item.jobsite_city, item.jobsite_state]
-                  .filter(Boolean)
-                  .join(', ')}
+              <Text style={styles.jobName} numberOfLines={2}>
+                {item.job_name || 'Untitled Job'}
               </Text>
-              <Text style={styles.dates}>
-                {fmtD(item.date)}
-              </Text>
+              {trip ? <Text style={styles.tripName} numberOfLines={1}>{trip}</Text> : null}
             </TouchableOpacity>
-          )}
+            );
+          }}
         />
       )}
     </LinenBackground>
@@ -115,13 +132,12 @@ const styles = StyleSheet.create({
     backgroundColor: C.linenCard, borderRadius: 10, padding: S.md,
     borderWidth: 1, borderColor: C.borderStrong, marginBottom: S.sm,
   },
-  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  jobName: { fontFamily: F.display, fontSize: 18, color: C.textHead, flex: 1, textTransform: 'uppercase', letterSpacing: 0.5 },
+  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 },
+  jobNumber: { fontFamily: F.display, fontSize: 28, color: C.textHead, letterSpacing: 1, flex: 1 },
+  jobName: { fontFamily: F.display, fontSize: 15, color: C.textBody, textTransform: 'uppercase', letterSpacing: 0.5 },
+  tripName: { fontFamily: F.displayMed, fontSize: 13, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2 },
   pwBadge: { backgroundColor: C.pw, borderRadius: 4, paddingHorizontal: 8, paddingVertical: 2, marginLeft: 8 },
   pwText: { fontFamily: F.display, fontSize: 11, color: C.white, letterSpacing: 1 },
-  jobNumber: { fontFamily: F.bodyMed, fontSize: 13, color: C.textMuted, marginBottom: 4 },
-  address: { fontFamily: F.body, fontSize: 14, color: C.textBody, marginBottom: 4 },
-  dates: { fontFamily: F.body, fontSize: 13, color: C.textLight },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { fontFamily: F.body, fontSize: 16, color: C.textMuted },
   emptyText: { fontFamily: F.bodyMed, fontSize: 16, color: C.textFaint },
