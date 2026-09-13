@@ -1,0 +1,32 @@
+---
+description: End-of-session wrap — commit, branch cleanup, push, and a clear safe-to-close check without being asked
+alwaysApply: true
+---
+
+# Session wrap
+
+When Chris wraps a slice — “wrap”, “merge”, “new session”, “done for now”, “go” after a wrap offer, or you judge the slice complete — **do the close-out. Do not wait to be asked** for commit, push, branch cleanup, or a safe-to-close check.
+
+## Close-out (in order)
+
+1. **One Bugbot pass** before merge. Fix only findings that would break **this slice**. Do not loop on edge cases, backlog items, or “notify office” work already deferred.
+2. **Commit** leftover work on the slice branch. Do not leave a dirty tree.
+3. **Merge** to `main` (fast-forward when possible). Check out `main`.
+4. **Branch cleanup:** delete the local feature branch after it is on `main`. Do not leave leftover feature-branch checkouts for the next session.
+5. **Push `main`** to `origin` (never force). Confirm the remote moved.
+6. **Say it’s safe to close** only after the checklist below is true. If something is not, say what is left in one line.
+
+## Safe to close — say all of these
+
+- Working tree clean
+- On `main`
+- Local `main` matches `origin/main` (pushed)
+- No leftover feature branch that still has the only copy of the work
+- Next session can start on `main` without picking up a dirty tree or unpushed commits
+
+## Do not
+
+- End a wrap with “say if you want this committed / pushed”
+- Force-push, skip hooks, or commit secrets
+- Start a new slice in the same wrap
+- Re-run Bugbot after a clean pass or after non-blocking nits
