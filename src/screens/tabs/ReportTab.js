@@ -256,7 +256,7 @@ export default function ReportTab({ jobId, employeeId }) {
   // ── Daily Log State ─────────────────────────────────────
   const { data: logEntries, isLoading: logLoading } = useQuery(
     `SELECT * FROM daily_log_entries WHERE job_id = ? AND created_at >= ? ORDER BY created_at ASC`,
-    [jobId, today + 'T00:00:00']
+    [jobId, new Date(today + 'T00:00:00').toISOString()]
   );
 
   const submittedTypes = useMemo(() => {

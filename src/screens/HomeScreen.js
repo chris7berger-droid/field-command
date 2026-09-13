@@ -7,7 +7,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { useQuery } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
-import { parseJSON, parseJSONArray, tod, addDaysYmd } from '../lib/utils';
+import { parseJSON, parseJSONArray, tod, addDaysYmd, localYmd } from '../lib/utils';
 import {
   LIVE_JOB_FILTER, jobNumber, tripLine, tripsByCallLog,
   collectSowDates, isActiveThisWeek,
@@ -159,10 +159,17 @@ export default function HomeScreen({ navigation, userName }) {
     [monday, sunday]
   );
 
+  const { data: priorPrtRows } = useQuery(
+    `SELECT job_id, report_date FROM daily_production_reports
+      WHERE report_date != ? AND (status = 'submitted' OR status = 'approved')`,
+    [today]
+  );
+
+  const weekStartIso = useMemo(() => new Date(monday + 'T00:00:00').toISOString(), [monday]);
   const { data: weekLogs } = useQuery(
     `SELECT job_id, entry_type, created_at FROM daily_log_entries
       WHERE created_at >= ?`,
-    [monday + 'T00:00:00']
+    [weekStartIso]
   );
 
   const wtcsByJob = useMemo(() => {
@@ -178,7 +185,10 @@ export default function HomeScreen({ navigation, userName }) {
   const logsByJobDate = useMemo(() => {
     const m = new Map();
     for (const e of (weekLogs || [])) {
-      const date = String(e.created_at || '').slice(0, 10);
+      if (!e.created_at) continue;
+      const when = new Date(e.created_at);
+      if (Number.isNaN(when.getTime())) continue;
+      const date = localYmd(when);
       const key = `${String(e.job_id)}|${date}`;
       if (!m.has(key)) m.set(key, new Set());
       m.get(key).add(e.entry_type);
@@ -194,6 +204,18 @@ export default function HomeScreen({ navigation, userName }) {
     return m;
   }, [weekReports]);
 
+  const priorCountByJob = useMemo(() => {
+    const m = new Map();
+    for (const r of (priorPrtRows || [])) {
+      const id = String(r.job_id);
+      if (!m.has(id)) m.set(id, new Set());
+      m.get(id).add(r.report_date);
+    }
+    const counts = new Map();
+    for (const [id, dates] of m) counts.set(id, dates.size);
+    return counts;
+  }, [priorPrtRows]);
+
   const clockInByJob = useMemo(() => {
     const m = new Map();
     for (const p of (weekPunches || [])) {
@@ -207,9 +229,14 @@ export default function HomeScreen({ navigation, userName }) {
   const weekStrip = useMemo(() => weekDates.map((date) => {
     const isFuture = date > today;
     const isToday = date === today;
-    const sod = (weekLogs || []).some((e) => String(e.created_at || '').slice(0, 10) === date && e.entry_type === 'SOD');
-    const mod = (weekLogs || []).some((e) => String(e.created_at || '').slice(0, 10) === date && e.entry_type === 'MOD');
-    const eod = (weekLogs || []).some((e) => String(e.created_at || '').slice(0, 10) === date && e.entry_type === 'EOD');
+    const onDay = (e, type) => {
+      if (!e.created_at || e.entry_type !== type) return false;
+      const when = new Date(e.created_at);
+      return !Number.isNaN(when.getTime()) && localYmd(when) === date;
+    };
+    const sod = (weekLogs || []).some((e) => onDay(e, 'SOD'));
+    const mod = (weekLogs || []).some((e) => onDay(e, 'MOD'));
+    const eod = (weekLogs || []).some((e) => onDay(e, 'EOD'));
     const report = (weekReports || []).find((r) => r.report_date === date && (r.status === 'submitted' || r.status === 'approved'));
     return {
       date,
@@ -280,11 +307,7 @@ export default function HomeScreen({ navigation, userName }) {
           const id = String(job.id);
           const num = jobNumber(job);
           const trip = tripLine(tripsByJob.get(id), today, monday, sunday);
-          const priorCount = (weekReports || []).filter((r) =>
-            String(r.job_id) === id
-            && r.report_date !== today
-            && (r.status === 'submitted' || r.status === 'approved')
-          ).length;
+          const priorCount = priorCountByJob.get(id) || 0;
           const sow = sowLineForJob(wtcsByJob.get(id), tripsByJob.get(id), today, priorCount);
           const types = logsByJobDate.get(`${id}|${today}`) || new Set();
           const report = reportsByJobDate.get(`${id}|${today}`);

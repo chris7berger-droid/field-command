@@ -108,7 +108,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId }) {
   const prtSubmitted = ['submitted', 'approved'].includes(prtRows?.[0]?.status);
   const { data: todayLogs } = useQuery(
     `SELECT entry_type FROM daily_log_entries WHERE job_id = ? AND created_at >= ?`,
-    [jobId, tod() + 'T00:00:00']
+    [jobId, new Date(tod() + 'T00:00:00').toISOString()]
   );
 
   useEffect(() => {

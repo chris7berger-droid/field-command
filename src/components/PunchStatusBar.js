@@ -31,6 +31,7 @@ export default function PunchStatusBar() {
   const [now, setNow] = useState(new Date());
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const today = tod();
+  const todayStartIso = new Date(today + 'T00:00:00').toISOString();
 
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 1000);
@@ -45,7 +46,7 @@ export default function PunchStatusBar() {
   // Query all daily log entries for today (across all jobs)
   const { data: logEntries } = useQuery(
     `SELECT job_id, entry_type FROM daily_log_entries WHERE created_at >= ?`,
-    [today + 'T00:00:00']
+    [todayStartIso]
   );
 
   const { data: prtReports } = useQuery(
