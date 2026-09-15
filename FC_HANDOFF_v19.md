@@ -12,7 +12,7 @@ Prepared Field Command for a repeatable iOS EAS production build (store / TestFl
 
 Chris logged into Expo as `@chris7berger`. `eas init` created and linked `@chris7berger/field-command`. No build and no submit were started.
 
-The first real-phone/TestFlight binary is **not** in this slice. It is gated on Chris’s paid Apple Developer Program status and Apple signing/credentials. Local Xcode Personal Team `7T26H9PCGN` is the free 7-day device path from v12 — not the TestFlight signing path.
+The first real-phone/TestFlight binary is **not** in this slice. It still needs the first EAS production build and Apple signing/credentials. **Correction (see v20):** Team `7T26H9PCGN` is Chris's active paid Apple Developer Program (Individual) team, not a free Personal Team. It is the TestFlight signing team.
 
 ---
 
@@ -61,15 +61,15 @@ The first real-phone/TestFlight binary is **not** in this slice. It is gated on 
 ## DECISIONS
 
 - Fail-closed at runtime; config evaluation may proceed under `EXPO_NO_DOTENV` so EAS can read the project.
-- Local Personal Team `7T26H9PCGN` stays for cable/simulator installs only.
-- Do not start the first EAS iOS production build until Chris confirms paid Apple Developer Program enrollment.
+- Team `7T26H9PCGN` is Chris's paid Apple Developer Program (Individual) team — the TestFlight / EAS store-distribution team. The v12 "free Personal Team / 7-day cert" reading was wrong.
+- Do not start the first EAS iOS production build until Chris asks. Membership is confirmed; remaining gate is the first-build credential prompts, not enrollment.
 
 ---
 
 ## BACKLOG
 
 - **REL1** (this slice) → Completed Log (config ready, no binary yet).
-- **TF1** (next) — first EAS iOS production build + TestFlight submit, blocked on paid Apple Developer Program.
+- **TF1** (next) — first EAS iOS production build + TestFlight submit. Paid ADP membership for team `7T26H9PCGN` is confirmed.
 - **FE1 / B2 / FE3** unchanged.
 - **AG1** already on `main` (`54e4ceb`).
 
@@ -77,9 +77,9 @@ The first real-phone/TestFlight binary is **not** in this slice. It is gated on 
 
 ## NEXT SESSION
 
-1. Merge this PR only after Chris approves.
-2. Confirm paid Apple Developer Program (not the free Personal Team).
-3. Then, only if Chris asks: `npx eas-cli build --platform ios --profile production`. Let EAS manage credentials under the **paid** team. Do not submit until that build is reviewed.
+1. This v19 PR is already on `main`.
+2. Paid Apple Developer Program is confirmed (team `7T26H9PCGN`, Individual, renews 2027-04-10).
+3. When Chris asks: `npx eas-cli build --platform ios --profile production`. Let EAS manage credentials for team `7T26H9PCGN`. Do not submit until that build is reviewed.
 4. After Chris approves the binary: `npx eas-cli submit --platform ios --profile production`, then App Store Connect → TestFlight → Internal Testing.
 
 Test job still **10176 / 1284 / call_log 3712**.

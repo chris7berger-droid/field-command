@@ -4,6 +4,8 @@
 **Branch:** `main` (nothing new committed to code since v11; this handoff only)
 **Session goal (this segment):** Get the current build onto Chris's physical iPhone so he can use it in-hand, after the v11 feature work was merged + shipped.
 
+> **Correction 2026-09-15:** Team `7T26H9PCGN` is Chris's active paid Apple Developer Program (Individual), annual fee US$99, renews 2027-04-10. It is **not** a free Personal Team and **can** ship TestFlight. This session's "free Apple ID / ~7-day cert" reading was wrong. See `FC_HANDOFF_v20.md`.
+
 ---
 
 ## SESSION SUMMARY

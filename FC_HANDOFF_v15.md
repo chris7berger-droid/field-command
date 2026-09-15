@@ -44,7 +44,7 @@ Also this session: load-out checks are **calendar today** (yesterday’s check d
 - **FE2** Closed 2026-09-13.
 - **FE1 / B2 / FE3** unchanged.
 - Desktop Field Command menu already exists in Sales (`/field/*`); may be hidden if the “field” app is off for the login. Not built this session.
-- Physical iPhone: v12 free-cert install died ~Sept 3. Rebuild or TestFlight next. React Native = iOS and Android from one app; crew distribution = TestFlight (Apple Developer $99), not public App Store.
+- Physical iPhone: v12 on-device install died ~Sept 3. Rebuild or TestFlight next. React Native = iOS and Android from one app; crew distribution = TestFlight. **Correction 2026-09-15:** team `7T26H9PCGN` is the paid ADP Individual team (renews 2027-04-10), not a free Personal Team — see v20.
 
 ---
 
