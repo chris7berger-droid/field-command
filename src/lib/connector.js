@@ -8,6 +8,7 @@
  */
 import { UpdateType } from '@powersync/react-native';
 import { supabase } from './supabase';
+import { normalizeTeamMemberId } from './activation';
 
 const POWERSYNC_URL =
   process.env.EXPO_PUBLIC_POWERSYNC_URL || 'https://69d81f100e377e689729db98.powersync.journeyapps.com';
@@ -46,7 +47,29 @@ function sanitizeUpload(tableName, data) {
   if (tableName === 'daily_production_reports' && out && out.wtc_id === '') {
     out.wtc_id = null;
   }
+  guardOperationalActorId(tableName, out);
   return out;
+}
+
+const ACTOR_FIELD_BY_TABLE = {
+  time_punches: 'employee_id',
+  daily_production_reports: 'submitted_by',
+  daily_log_entries: 'employee_id',
+  job_material_checks: 'checked_by',
+};
+
+function guardOperationalActorId(tableName, row) {
+  const idField = ACTOR_FIELD_BY_TABLE[tableName];
+  if (!idField || !row || !Object.prototype.hasOwnProperty.call(row, idField)) return;
+  const id = normalizeTeamMemberId(row[idField]);
+  if (!id) {
+    const error = new Error(
+      `Blocked ${tableName} sync write: missing canonical team_members.id (${idField})`
+    );
+    error.code = 'FC_MISSING_TEAM_MEMBER_ID';
+    throw error;
+  }
+  row[idField] = id;
 }
 
 export class SupabaseConnector {
@@ -83,15 +106,25 @@ export class SupabaseConnector {
     try {
       for (const op of transaction.crud) {
         lastOp = op;
+        let opData;
+        try {
+          opData = sanitizeUpload(op.table, op.opData);
+        } catch (guardErr) {
+          if (guardErr?.code === 'FC_MISSING_TEAM_MEMBER_ID') {
+            console.error('PowerSync upload blocked invalid actor id:', op, guardErr.message);
+            continue;
+          }
+          throw guardErr;
+        }
         const table = this.client.from(op.table);
         let result;
 
         switch (op.op) {
           case UpdateType.PUT:
-            result = await table.upsert({ ...sanitizeUpload(op.table, op.opData), id: op.id });
+            result = await table.upsert({ ...opData, id: op.id });
             break;
           case UpdateType.PATCH:
-            result = await table.update(sanitizeUpload(op.table, op.opData)).eq('id', op.id);
+            result = await table.update(opData).eq('id', op.id);
             break;
           case UpdateType.DELETE:
             result = await table.delete().eq('id', op.id);

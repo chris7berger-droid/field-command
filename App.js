@@ -6,7 +6,14 @@
  */
 import '@azure/core-asynciterator-polyfill';
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import {
+  View,
+  Text,
+  ActivityIndicator,
+  TouchableOpacity,
+  StyleSheet,
+  Platform,
+} from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { PowerSyncContext } from '@powersync/react';
@@ -23,9 +30,10 @@ import {
   BarlowCondensed_700Bold,
 } from '@expo-google-fonts/barlow-condensed';
 
-import { C } from './src/lib/tokens';
+import { C, F, S } from './src/lib/tokens';
 import { supabase } from './src/lib/supabase';
 import { getPowerSync, connectPowerSync } from './src/lib/powersync';
+import { evaluateFieldActivation } from './src/lib/activation';
 import PunchStatusBar from './src/components/PunchStatusBar';
 import LoginScreen from './src/screens/LoginScreen';
 import HomeScreen from './src/screens/HomeScreen';
@@ -42,6 +50,7 @@ export default function App() {
   const [dbReady, setDbReady] = useState(false);
   const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
+  const [accessBlocked, setAccessBlocked] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const connectedRef = useRef(false);
 
@@ -66,28 +75,32 @@ export default function App() {
   // connects the sync engine, leaving the app permanently "Offline" on
   // every relaunch (crew devices cold-start with a saved session).
   useEffect(() => {
-    if (dbReady && session && !connectedRef.current) {
+    if (dbReady && session && user && !connectedRef.current) {
       connectedRef.current = true;
       connectPowerSync().catch(console.error);
     }
-  }, [dbReady, session]);
+  }, [dbReady, session, user]);
 
   // ── Check existing session on mount ───────────────────
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
+    supabase.auth.getSession().then(async ({ data: { session: s } }) => {
       if (s) {
         setSession(s);
-        loadUser(s.user.email);
+        await loadUser(s.user);
       }
       setCheckingAuth(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
-      if (s) loadUser(s.user.email);
-      else {
+      if (s) {
+        setCheckingAuth(true);
+        loadUser(s.user).finally(() => setCheckingAuth(false));
+      } else {
         setUser(null);
+        setAccessBlocked(false);
         connectedRef.current = false; // allow reconnect on next login
+        setCheckingAuth(false);
       }
     });
 
@@ -95,61 +108,92 @@ export default function App() {
   }, []);
 
   // ── Load user profile ─────────────────────────────────
-  const loadUser = useCallback(async (email) => {
-    // Try team_members first (Command Suite shared table)
-    const { data: tm } = await supabase
-      .from('team_members')
-      .select('id, name, email, role')
-      .eq('email', email)
-      .single();
+  const loadUser = useCallback(async (sessionUser) => {
+    const authId = sessionUser?.id || null;
+    const email = sessionUser?.email?.trim().toLowerCase() || null;
+    let teamMember = null;
 
-    if (tm) {
-      setUser(tm);
+    if (authId) {
+      const { data, error } = await supabase
+        .from('team_members')
+        .select('id, name, email, role, active, apps')
+        .eq('auth_id', authId)
+        .maybeSingle();
+      if (error) console.warn('team_members auth_id lookup failed:', error.message);
+      teamMember = data || null;
+    }
+
+    if (!teamMember && email) {
+      const { data, error } = await supabase
+        .from('team_members')
+        .select('id, name, email, role, active, apps')
+        .ilike('email', email)
+        .maybeSingle();
+      if (error) console.warn('team_members email lookup failed:', error.message);
+      teamMember = data || null;
+    }
+
+    const activation = evaluateFieldActivation(teamMember);
+    if (!activation.allowed) {
+      setUser(null);
+      setAccessBlocked(true);
       return;
     }
 
-    // Try crew table (Schedule Command)
-    const { data: crew } = await supabase
-      .from('crew')
-      .select('name, phone')
-      .eq('email', email)
-      .single();
-
-    if (crew) {
-      const parts = crew.name.split(', ');
-      const displayName = parts.length === 2 ? `${parts[1]} ${parts[0]}` : crew.name;
-      setUser({ name: displayName, email, role: 'crew' });
-      return;
-    }
-
-    // Fallback
-    const fallbackName = email.split('@')[0].replace(/[._]/g, ' ');
-    setUser({ name: fallbackName, email, role: 'crew' });
+    setAccessBlocked(false);
+    setUser({
+      id: activation.id,
+      name: teamMember.name || 'Crew Member',
+      email: teamMember.email || email || '',
+      role: teamMember.role || 'crew',
+    });
   }, []);
 
   // ── Handle login ──────────────────────────────────────
   const handleLogin = useCallback((newSession) => {
     setSession(newSession);
-    if (newSession?.user?.email) {
-      loadUser(newSession.user.email);
+    setCheckingAuth(true);
+    if (newSession?.user) {
+      loadUser(newSession.user).finally(() => setCheckingAuth(false));
+    } else {
+      setCheckingAuth(false);
     }
     // PowerSync connect is handled by the dbReady+session effect above,
     // so both fresh login and restored sessions take the same path.
   }, [loadUser]);
+
+  const handleBlockedSignOut = useCallback(async () => {
+    await supabase.auth.signOut();
+  }, []);
 
   // ── Loading ───────────────────────────────────────────
   if (!fontsLoaded || !dbReady || checkingAuth) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator size="large" color={C.teal} />
-        <Text style={styles.loadingText}>Loading Field Command...</Text>
+        <Text style={styles.loadingText}>
+          {session ? 'Checking Field Command access...' : 'Loading Field Command...'}
+        </Text>
       </View>
     );
   }
 
   // ── Not logged in ─────────────────────────────────────
-  if (!session || !user) {
+  if (!session) {
     return <LoginScreen onLogin={handleLogin} />;
+  }
+
+  if (accessBlocked) {
+    return <BlockedAccessState onSignOut={handleBlockedSignOut} />;
+  }
+
+  if (!user) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator size="large" color={C.teal} />
+        <Text style={styles.loadingText}>Checking Field Command access...</Text>
+      </View>
+    );
   }
 
   // ── Main app ──────────────────────────────────────────
@@ -186,6 +230,27 @@ export default function App() {
   );
 }
 
+function BlockedAccessState({ onSignOut }) {
+  return (
+    <View style={styles.blockedScreen}>
+      <View style={styles.blockedCard}>
+        <Text style={styles.blockedTitle}>FIELD COMMAND NOT ACTIVE</Text>
+        <Text style={styles.blockedBody}>
+          Your account is not currently activated for Field Command.
+        </Text>
+        <Text style={styles.blockedBody}>Contact the office if you need access.</Text>
+        <TouchableOpacity
+          style={styles.blockedSignOutBtn}
+          onPress={onSignOut}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.blockedSignOutText}>SIGN OUT</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   appWrap: {
     flex: 1,
@@ -206,5 +271,49 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: C.teal,
     letterSpacing: 1,
+  },
+  blockedScreen: {
+    flex: 1,
+    backgroundColor: C.linen,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: S.lg,
+  },
+  blockedCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: C.linenCard,
+    borderWidth: 1,
+    borderColor: C.borderStrong,
+    borderRadius: 12,
+    padding: S.lg,
+    gap: S.sm,
+  },
+  blockedTitle: {
+    fontFamily: F.display,
+    color: C.textHead,
+    fontSize: 28,
+    letterSpacing: 1,
+    textAlign: 'center',
+  },
+  blockedBody: {
+    fontFamily: F.body,
+    color: C.textBody,
+    fontSize: 16,
+    lineHeight: 24,
+    textAlign: 'center',
+  },
+  blockedSignOutBtn: {
+    marginTop: S.md,
+    borderRadius: 10,
+    backgroundColor: C.dark,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  blockedSignOutText: {
+    fontFamily: F.display,
+    color: C.teal,
+    fontSize: 16,
+    letterSpacing: 2,
   },
 });

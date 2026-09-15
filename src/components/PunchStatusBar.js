@@ -16,6 +16,7 @@ import { C, F, S } from '../lib/tokens';
 import { tod } from '../lib/utils';
 import { getCurrentPosition } from '../lib/location';
 import { fetchWeather } from '../lib/weather';
+import { requireCanonicalTeamMemberId, isMissingTeamMemberIdError } from '../lib/activation';
 import {
   DUTY_LOGS, PRT_DUTY, dutyState,
   punchLookbackDate, openClockInPunch, isOvernightShift,
@@ -153,6 +154,7 @@ export default function PunchStatusBar() {
       // Still clock out. They're fixing a missed punch, not starting a shift.
     }
     try {
+      const actorId = requireCanonicalTeamMemberId(openPunch.employee_id, 'time punch write');
       const stamp = new Date().toISOString();
       await db.execute(
         `INSERT INTO time_punches (id, job_id, employee_id, punch_type, punch_time, punch_date,
@@ -161,7 +163,7 @@ export default function PunchStatusBar() {
         [
           generateId(),
           openPunch.job_id,
-          openPunch.employee_id,
+          actorId,
           'clock_out',
           stamp,
           today,
@@ -171,7 +173,11 @@ export default function PunchStatusBar() {
         ]
       );
     } catch (e) {
-      Alert.alert('Could not punch out', e?.message || 'Try again.');
+      if (isMissingTeamMemberIdError(e)) {
+        Alert.alert('Field Command not active', 'Your account is not activated for Field Command.');
+      } else {
+        Alert.alert('Could not punch out', e?.message || 'Try again.');
+      }
     } finally {
       setBusy(false);
     }

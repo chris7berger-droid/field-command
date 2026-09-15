@@ -13,13 +13,14 @@
  */
 import React, { useState, useMemo } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, StyleSheet,
+  View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert,
 } from 'react-native';
 import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
 import { parseJSON, fmtPct, fmtDayLabel, tod, addDaysYmd } from '../../lib/utils';
 import { tripSeq, tripTitle } from '../../lib/trips';
 import { uniqueNames } from '../../lib/crew';
+import { requireCanonicalTeamMemberId, isMissingTeamMemberIdError } from '../../lib/activation';
 import LinenBackground from '../../components/LinenBackground';
 
 // Local uuid (PowerSync row ids are client-generated v4 uuids).
@@ -338,20 +339,30 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
   const toggleCheck = async (mat) => {
     const matId = mat.wtc_material_id;
     if (!matId) return; // no stable id → cannot persist safely
+    let actorId;
+    try {
+      actorId = requireCanonicalTeamMemberId(employeeId, 'material check write');
+    } catch (e) {
+      if (isMissingTeamMemberIdError(e)) {
+        Alert.alert('Field Command not active', 'Your account is not activated for Field Command.');
+        return;
+      }
+      throw e;
+    }
     const existing = checkByMat.get(matId);
     const now = new Date().toISOString();
     const checkedToday = !!(existing && existing.checked && existing.check_date === today);
     if (existing) {
       await db.execute(
         `UPDATE job_material_checks SET checked=?, check_date=?, checked_by=?, checked_by_name=?, updated_at=? WHERE id=?`,
-        [checkedToday ? 0 : 1, today, employeeId || null, employeeName || null, now, existing.id]
+        [checkedToday ? 0 : 1, today, actorId, employeeName || null, now, existing.id]
       );
     } else {
       await db.execute(
         `INSERT INTO job_material_checks
            (id, job_id, wtc_material_id, check_date, material_name, checked, checked_by, checked_by_name, created_at, updated_at)
          VALUES (?,?,?,?,?,1,?,?,?,?)`,
-        [generateId(), jobId, matId, today, mat.name || null, employeeId || null, employeeName || null, now, now]
+        [generateId(), jobId, matId, today, mat.name || null, actorId, employeeName || null, now, now]
       );
     }
   };
