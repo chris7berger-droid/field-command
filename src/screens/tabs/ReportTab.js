@@ -22,6 +22,7 @@ import LinenBackground from '../../components/LinenBackground';
 import { mergeDaysByDate } from './TasksTab';
 import { pickSowDaysForPrt, reportClockGate, reportClockCopy, punchLookbackDate, shiftDate } from '../../lib/dayDuty';
 import { jobNumber } from '../../lib/trips';
+import { requireCanonicalTeamMemberId, isMissingTeamMemberIdError } from '../../lib/activation';
 
 const LOG_TYPES = [
   { key: 'SOD', label: 'START OF DAY', hint: 'Photos of job site at start' },
@@ -285,6 +286,18 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
   const [logNotes, setLogNotes] = useState('');
   const [logSubmitting, setLogSubmitting] = useState(false);
 
+  const getActorId = useCallback(() => {
+    try {
+      return requireCanonicalTeamMemberId(employeeId, 'report write');
+    } catch (e) {
+      if (isMissingTeamMemberIdError(e)) {
+        Alert.alert('Field Command not active', 'Your account is not activated for Field Command.');
+        return null;
+      }
+      throw e;
+    }
+  }, [employeeId]);
+
   // ── Photo helpers ───────────────────────────────────────
   const pickPhoto = useCallback(async (setter) => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -324,6 +337,8 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
 
     setPrtSubmitting(true);
     try {
+      const actorId = getActorId();
+      if (!actorId) return;
       // Save only the tasks actually worked today — not every seeded SOW task —
       // so the submitted report reflects real production, not a wall of 0%s.
       const data = {
@@ -344,7 +359,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
         const id = generateId();
         await db.execute(
           `INSERT INTO daily_production_reports (id,job_id,wtc_id,report_date,submitted_by,tasks,materials_used,hours_regular,hours_ot,photos,notes,status,synced,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?)`,
-          [id, jobId, sowWtcId, workDate, employeeId, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, new Date().toISOString()]
+          [id, jobId, sowWtcId, workDate, actorId, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, new Date().toISOString()]
         );
       }
       Vibration.vibrate([100, 50, 100]);
@@ -354,7 +369,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
     } finally {
       setPrtSubmitting(false);
     }
-  }, [taskEntries, existingReport, jobId, employeeId, workDate, db, sowWtcId]);
+  }, [taskEntries, existingReport, jobId, workDate, db, sowWtcId, getActorId]);
 
   const savePRTDraft = useCallback(async () => {
     const data = {
@@ -366,20 +381,26 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
       status: 'draft',
     };
 
-    if (existingReport) {
-      await db.execute(
-        `UPDATE daily_production_reports SET tasks=?, status=?, synced=0 WHERE id=?`,
-        [data.tasks, data.status, existingReport.id]
-      );
-    } else {
-      const id = generateId();
-      await db.execute(
-        `INSERT INTO daily_production_reports (id,job_id,wtc_id,report_date,submitted_by,tasks,materials_used,hours_regular,hours_ot,photos,notes,status,synced,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?)`,
-      [id, jobId, sowWtcId, workDate, employeeId, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, new Date().toISOString()]
-      );
+    try {
+      const actorId = getActorId();
+      if (!actorId) return;
+      if (existingReport) {
+        await db.execute(
+          `UPDATE daily_production_reports SET tasks=?, status=?, synced=0 WHERE id=?`,
+          [data.tasks, data.status, existingReport.id]
+        );
+      } else {
+        const id = generateId();
+        await db.execute(
+          `INSERT INTO daily_production_reports (id,job_id,wtc_id,report_date,submitted_by,tasks,materials_used,hours_regular,hours_ot,photos,notes,status,synced,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?)`,
+          [id, jobId, sowWtcId, workDate, actorId, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, new Date().toISOString()]
+        );
+      }
+      Vibration.vibrate(50);
+    } catch (e) {
+      Alert.alert('Not saved', `Could not save the PRT draft: ${e?.message || 'unknown error'}.`);
     }
-    Vibration.vibrate(50);
-  }, [taskEntries, existingReport, jobId, employeeId, workDate, db, sowWtcId]);
+  }, [taskEntries, existingReport, jobId, workDate, db, sowWtcId, getActorId]);
 
   // ── Daily Log Submit (optimistic — save immediately, upload photos in background) ──
   const submitLogEntry = useCallback(async () => {
@@ -388,12 +409,14 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
 
     setLogSubmitting(true);
     try {
+      const actorId = getActorId();
+      if (!actorId) return;
       // Save entry immediately with local photo URIs
       const id = generateId();
       const localUris = [...logPhotos];
       await db.execute(
         `INSERT INTO daily_log_entries (id, job_id, employee_id, entry_type, photos, notes, synced, created_at) VALUES (?,?,?,?,?,?,0,?)`,
-        [id, jobId, employeeId, logType, JSON.stringify(localUris), logNotes.trim(), new Date().toISOString()]
+        [id, jobId, actorId, logType, JSON.stringify(localUris), logNotes.trim(), new Date().toISOString()]
       );
 
       // Reset form
@@ -428,10 +451,12 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
           console.error('Background photo upload failed:', err);
         });
       }
+    } catch (e) {
+      Alert.alert('Not saved', `Could not save this log entry: ${e?.message || 'unknown error'}.`);
     } finally {
       setLogSubmitting(false);
     }
-  }, [logType, logPhotos, logNotes, jobId, employeeId, db]);
+  }, [logType, logPhotos, logNotes, jobId, db, getActorId]);
 
   // ── Render ──────────────────────────────────────────────
   if (Array.isArray(punchRows) && !reportGate.allowed) {

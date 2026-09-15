@@ -18,7 +18,7 @@ const TITLES = {
 
 export default function JobDetailScreen({ route, navigation, user }) {
   const { jobId, jobName, tab = 'TimeClock', reportSection, logType } = route.params;
-  const employeeId = user?.id || '';
+  const employeeId = user?.id || null;
 
   let body = null;
   if (tab === 'Tasks') {

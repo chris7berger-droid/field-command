@@ -26,6 +26,7 @@ import { getCurrentPosition, checkGeofence, DEMO_POSITIONS } from '../../lib/loc
 import { fetchWeather } from '../../lib/weather';
 import { missingClockOutDuties, openClockJobId, switchJobClockCopy, punchLookbackDate, shiftDate, punchesForOpenShift } from '../../lib/dayDuty';
 import { jobNumber } from '../../lib/trips';
+import { requireCanonicalTeamMemberId, isMissingTeamMemberIdError } from '../../lib/activation';
 import LinenBackground from '../../components/LinenBackground';
 
 const LUNCH_DURATION_MS = 30 * 60 * 1000;
@@ -219,13 +220,14 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
 
   // ── Write punch ───────────────────────────────────────
   const writePunch = useCallback(async (type, position, weatherData, gpsOverride = false) => {
+    const actorId = requireCanonicalTeamMemberId(employeeId, 'time punch write');
     const id = generateId();
     await db.execute(
       `INSERT INTO time_punches (id, job_id, employee_id, punch_type, punch_time, punch_date,
         latitude, longitude, on_site, gps_override, weather_temp, weather_condition, synced, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
       [
-        id, jobId, employeeId, type,
+        id, jobId, actorId, type,
         new Date().toISOString(), tod(),
         position?.latitude || null, position?.longitude || null,
         position ? (gpsOverride ? 0 : 1) : 1,
@@ -235,6 +237,18 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
       ]
     );
   }, [db, jobId, employeeId]);
+
+  const handleWriteError = useCallback((error, message) => {
+    if (isMissingTeamMemberIdError(error)) {
+      Alert.alert('Field Command not active', 'Your account is not activated for Field Command.');
+      return true;
+    }
+    if (message) {
+      Alert.alert('Not saved', message);
+      return true;
+    }
+    return false;
+  }, []);
 
   // ── Advance step ──────────────────────────────────────
   const advanceStep = useCallback(() => {
@@ -293,12 +307,19 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
       return;
     }
 
-    await writePunch(currentStep.punch, position, weatherData, gpsOverride);
+    try {
+      await writePunch(currentStep.punch, position, weatherData, gpsOverride);
+    } catch (e) {
+      if (!handleWriteError(e, `Could not save this punch: ${e?.message || 'unknown error'}.`)) {
+        throw e;
+      }
+      return;
+    }
     if (currentStep.punch === 'clock_in') setShiftStart(new Date());
     if (currentStep.punch === 'lunch_start') setLunchStart(new Date());
     Vibration.vibrate(100);
     advanceStep();
-  }, [currentStep, checkGPS, writePunch, advanceStep, prtSubmitted, todayLogs, allTodayPunches, otherJobRows, jobId, navigation]);
+  }, [currentStep, checkGPS, writePunch, advanceStep, prtSubmitted, todayLogs, allTodayPunches, otherJobRows, jobId, navigation, handleWriteError]);
 
   // ── Confirm clock out ─────────────────────────────────
   const confirmClockOut = useCallback(async () => {
@@ -313,18 +334,32 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
       }
       throw e;
     }
-    await writePunch('clock_out', position, weatherData);
+    try {
+      await writePunch('clock_out', position, weatherData);
+    } catch (e) {
+      if (!handleWriteError(e, `Could not save clock out: ${e?.message || 'unknown error'}.`)) {
+        throw e;
+      }
+      return;
+    }
     Vibration.vibrate([100, 50, 100]);
     advanceStep();
-  }, [checkGPS, writePunch, advanceStep]);
+  }, [checkGPS, writePunch, advanceStep, handleWriteError]);
 
   // ── Auto lunch end ────────────────────────────────────
   const handleAutoLunchEnd = useCallback(async () => {
-    await writePunch('lunch_end', null, null);
+    try {
+      await writePunch('lunch_end', null, null);
+    } catch (e) {
+      if (!handleWriteError(e, `Could not save lunch end: ${e?.message || 'unknown error'}.`)) {
+        throw e;
+      }
+      return;
+    }
     setLunchStart(null);
     Vibration.vibrate([100, 50, 100]);
     advanceStep();
-  }, [writePunch, advanceStep]);
+  }, [writePunch, advanceStep, handleWriteError]);
 
   // ── Geofence override ─────────────────────────────────
   const handleGeofenceOverride = useCallback(() => {
