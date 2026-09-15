@@ -15,7 +15,12 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.fieldcommand.app",
+      "buildNumber": "1",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
       "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
         "NSLocationWhenInUseUsageDescription": "Field Command uses your location to verify you are on the job site when clocking in and out.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Field Command uses your location to verify you are on the job site.",
         "NSCameraUsageDescription": "Field Command uses the camera to capture job site photos for daily production reports.",
@@ -40,6 +45,12 @@
       "expo-location",
       "expo-camera",
       "expo-image-picker"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "9b762fbe-c0d1-46a6-a2bb-efe014e7b489"
+      }
+    },
+    "owner": "chris7berger"
   }
 }
