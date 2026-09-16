@@ -5,7 +5,7 @@ that completes, defers, or discovers an item. Status values: `Open`,
 `In Progress`, `Blocked`, `Done` (move Done items to the Completed Log
 at the bottom and out of the active table within a session or two).
 
-Last updated: 2026-09-15 (**TF1 unblocked:** team `7T26H9PCGN` is paid ADP Individual. No build/submit yet.)
+Last updated: 2026-09-15 (**TF1:** TestFlight build 2 white-screen = dynamic env.js. Static inline fix pending merge. No build 3 yet.)
 
 ## Tier definitions
 
@@ -40,7 +40,7 @@ Last updated: 2026-09-15 (**TF1 unblocked:** team `7T26H9PCGN` is paid ADP Indiv
 
 | ID  | Tier | Status | Item | Source | Notes |
 |-----|------|--------|------|--------|-------|
-| TF1 | T2   | Open   | First EAS iOS production build + TestFlight internal submit | REL1 2026-09-15 | **Ready except first-build Apple/EAS credential prompts.** Team `7T26H9PCGN` is Chris's active paid Apple Developer Program (Individual), renews 2027-04-10 — not a free Personal Team. Expo `@chris7berger/field-command`, projectId `9b762fbe-c0d1-46a6-a2bb-efe014e7b489`. When Chris asks: `npx eas-cli build --platform ios --profile production`, review the binary, then submit. Expo Go is not valid. Do not redesign env into EAS-managed environments in the same breath. |
+| TF1 | T2   | Open   | First EAS iOS production build + TestFlight internal submit | REL1 2026-09-15 | **Build 2 on TestFlight is unusable.** 1.0.0 (2) / EAS `3a37b775-b503-4eeb-8b2e-52cfb71f052d` white-screens on launch: `env.js` used `process.env[name]`, which Expo does not inline in production. Fix on `fix/testflight-static-env-inline`. After merge, ship **build 3**. Team `7T26H9PCGN` is paid ADP Individual. Expo `@chris7berger/field-command`. Expo Go is not valid. |
 
 ---
 
