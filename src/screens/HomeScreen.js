@@ -1,7 +1,8 @@
 /**
- * Home — today's expected work, not a timesheet.
+ * Home — this person's assigned work for the week, not every live job.
  * SOD / MOD / EOD / PRT start dim, light up as the crew knocks them out.
  * The week strip is a record of those days, not hours.
+ * View All is the broader escape hatch; do not apply this filter there.
  */
 import React, { useMemo, useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, StyleSheet } from 'react-native';
@@ -12,7 +13,7 @@ import {
   LIVE_JOB_FILTER, jobNumber, tripLine, tripsByCallLog,
   collectSowDates, isActiveThisWeek,
 } from '../lib/trips';
-import { crewByCallLog, crewLine } from '../lib/crew';
+import { crewByCallLog, crewLine, assignedCallLogIds, homeVisibleJobIds } from '../lib/crew';
 import {
   DUTY_LOGS, PRT_DUTY, dutyState, pickSowDaysForPrt,
   openClockInPunch, punchDay, punchLookbackDate, reportClockGate, reportClockCopy,
@@ -67,11 +68,13 @@ function prtHit(report) {
   return worked.every((t) => Number(t.pct_today) >= (Number(t.target_pct) || 0));
 }
 
-export default function HomeScreen({ navigation, userName }) {
+export default function HomeScreen({ navigation, user }) {
   const today = tod();
   const monday = getMonday();
   const sunday = getSunday(monday);
   const weekDates = useMemo(() => getWeekDates(monday), [monday]);
+  const userId = user?.id || '';
+  const userName = user?.name || '';
   const firstName = userName ? userName.split(' ')[0] : 'Crew';
   const [now, setNow] = useState(() => new Date());
 
@@ -88,8 +91,8 @@ export default function HomeScreen({ navigation, userName }) {
   const punchFrom = lookback < monday ? lookback : monday;
 
   const { data: weekPunches } = useQuery(
-    `SELECT * FROM time_punches WHERE punch_date >= ? AND punch_date <= ? ORDER BY punch_date ASC, punch_time ASC`,
-    [punchFrom, sunday]
+    `SELECT * FROM time_punches WHERE employee_id = ? AND punch_date >= ? AND punch_date <= ? ORDER BY punch_date ASC, punch_time ASC`,
+    [userId, punchFrom, sunday]
   );
 
   const { data: jobs } = useQuery(
@@ -119,7 +122,7 @@ export default function HomeScreen({ navigation, userName }) {
   );
 
   const { data: assignRows } = useQuery(
-    `SELECT j.call_log_id AS call_log_id, a.crew_name AS crew_name
+    `SELECT j.call_log_id AS call_log_id, a.crew_name AS crew_name, a.date AS date
        FROM assignments a
        INNER JOIN jobs j ON j.id = a.job_id
       WHERE ${LIVE_JOB_FILTER}`
@@ -148,19 +151,30 @@ export default function HomeScreen({ navigation, userName }) {
     return m;
   }, [liveJobRows]);
 
+  const openPunch = useMemo(() => openClockInPunch(weekPunches), [weekPunches]);
+  const onJobId = openPunch ? String(openPunch.job_id) : null;
+  const workDate = punchDay(openPunch) || today;
+
+  const { data: openJobRows } = useQuery(
+    `SELECT * FROM call_log WHERE id = ?`,
+    [onJobId || '__none__']
+  );
+
   const weekJobs = useMemo(() => {
+    const assignedIds = assignedCallLogIds({
+      assignRows,
+      memberName: userName,
+      monday,
+      sunday,
+    });
+    const visibleIds = homeVisibleJobIds({ assignedIds, openPunch });
     const liveByCl = new Map();
     for (const row of (liveJobRows || [])) {
       const id = String(row.call_log_id);
       if (!liveByCl.has(id)) liveByCl.set(id, []);
       liveByCl.get(id).push(row);
     }
-    const punched = new Set(
-      (weekPunches || []).map((p) => String(p.job_id)).filter((id) => id && id !== 'null')
-    );
-    return (jobs || []).filter((job) => {
-      const id = String(job.id);
-      if (punched.has(id)) return true;
+    const isLiveThisWeek = (id) => {
       const trips = tripsByJob.get(id);
       const sowDates = sowDatesByJob.get(id);
       const lives = liveByCl.get(id) || [];
@@ -173,8 +187,22 @@ export default function HomeScreen({ navigation, userName }) {
         scheduledStart: row.scheduled_start || row.start_date,
         scheduledEnd: row.scheduled_end || row.end_date,
       }, monday, sunday));
+    };
+    const list = (jobs || []).filter((job) => {
+      const id = String(job.id);
+      if (!visibleIds.has(id)) return false;
+      if (onJobId && id === onJobId) return true;
+      return isLiveThisWeek(id);
     });
-  }, [jobs, liveJobRows, tripsByJob, sowDatesByJob, weekPunches, monday, sunday]);
+    if (onJobId && !list.some((job) => String(job.id) === onJobId)) {
+      const openJob = (openJobRows || []).find((j) => String(j.id) === onJobId);
+      if (openJob) list.push(openJob);
+    }
+    return list;
+  }, [
+    jobs, liveJobRows, tripsByJob, sowDatesByJob, assignRows, userName,
+    openPunch, onJobId, openJobRows, monday, sunday,
+  ]);
 
   const { data: weekReports } = useQuery(
     `SELECT id, job_id, report_date, status, tasks FROM daily_production_reports
@@ -242,10 +270,6 @@ export default function HomeScreen({ navigation, userName }) {
     return counts;
   }, [priorPrtRows]);
 
-  const openPunch = useMemo(() => openClockInPunch(weekPunches), [weekPunches]);
-  const onJobId = openPunch ? String(openPunch.job_id) : null;
-  const workDate = punchDay(openPunch) || today;
-
   const todayJobs = useMemo(() => {
     const list = [...weekJobs];
     if (!onJobId) return list;
@@ -257,18 +281,28 @@ export default function HomeScreen({ navigation, userName }) {
     return list;
   }, [weekJobs, onJobId]);
 
+  const visibleJobIds = useMemo(
+    () => new Set((weekJobs || []).map((j) => String(j.id))),
+    [weekJobs]
+  );
+
   const weekStrip = useMemo(() => weekDates.map((date) => {
     const isFuture = date > today;
     const isToday = date === today;
     const onDay = (e, type) => {
       if (!e.created_at || e.entry_type !== type) return false;
+      if (!visibleJobIds.has(String(e.job_id))) return false;
       const when = new Date(e.created_at);
       return !Number.isNaN(when.getTime()) && localYmd(when) === date;
     };
     const sod = (weekLogs || []).some((e) => onDay(e, 'SOD'));
     const mod = (weekLogs || []).some((e) => onDay(e, 'MOD'));
     const eod = (weekLogs || []).some((e) => onDay(e, 'EOD'));
-    const report = (weekReports || []).find((r) => r.report_date === date && (r.status === 'submitted' || r.status === 'approved'));
+    const report = (weekReports || []).find((r) => (
+      r.report_date === date
+      && visibleJobIds.has(String(r.job_id))
+      && (r.status === 'submitted' || r.status === 'approved')
+    ));
     return {
       date,
       isToday,
@@ -280,7 +314,7 @@ export default function HomeScreen({ navigation, userName }) {
         { key: 'PRT', on: !!report, hit: report ? prtHit(report) : false },
       ],
     };
-  }), [weekDates, today, weekLogs, weekReports]);
+  }), [weekDates, today, weekLogs, weekReports, visibleJobIds]);
 
   const goMenu = (job) => {
     navigation.navigate('JobMenu', { jobId: job.id, jobName: job.job_name });
@@ -373,7 +407,7 @@ export default function HomeScreen({ navigation, userName }) {
 
         <Text style={styles.sectionTitle}>TODAY</Text>
         {todayJobs.length === 0 ? (
-          <Text style={styles.emptyText}>No jobs on the board this week</Text>
+          <Text style={styles.emptyText}>No jobs assigned this week</Text>
         ) : todayJobs.map((job) => {
           const id = String(job.id);
           const num = jobNumber(job);
