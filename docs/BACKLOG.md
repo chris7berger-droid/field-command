@@ -5,7 +5,7 @@ that completes, defers, or discovers an item. Status values: `Open`,
 `In Progress`, `Blocked`, `Done` (move Done items to the Completed Log
 at the bottom and out of the active table within a session or two).
 
-Last updated: 2026-09-16 (**TF1 closed:** TestFlight 1.0.0 (3) verified on Chris’s physical iPhone. Next is TF2 — controlled production writes, one path at a time.)
+Last updated: 2026-09-16 (**HOME1:** person-specific Home. TF2 writes still paused.)
 
 ## Tier definitions
 
@@ -40,7 +40,7 @@ Last updated: 2026-09-16 (**TF1 closed:** TestFlight 1.0.0 (3) verified on Chris
 
 | ID  | Tier | Status | Item | Source | Notes |
 |-----|------|--------|------|--------|-------|
-| TF2 | T1   | Open   | Controlled production write verification on TestFlight 1.0.0 (3) | TF1 2026-09-16 | **Do this before activating additional crew users.** Chris’s physical iPhone is on build 3; launch, sign-in, activation, Home, job list, and opening a real job already passed. **No production writes yet.** Verify one write path at a time: time punch, daily log, PRT, material check, photo submission. Do not batch them. Do not invent test jobs. Stop and record after each path. Expo Go is not valid. |
+| TF2 | T1   | Open   | Controlled production write verification on TestFlight 1.0.0 (3) | TF1 2026-09-16 | **Paused until Home visibility is on a TestFlight binary and Chris confirms empty Home.** After HOME1, Home is person-specific: Chris has no Crew Scheduler assignments, so Home should be empty; View All stays the live-job hatch. Do not activate additional crew users. **No production writes yet.** When unpaused: one write path at a time — time punch, daily log, PRT, material check, photo submission. Expo Go is not valid. |
 
 ---
 
@@ -57,6 +57,7 @@ Last updated: 2026-09-16 (**TF1 closed:** TestFlight 1.0.0 (3) verified on Chris
 
 | ID  | Tier | Closed     | Item | Resolution |
 |-----|------|------------|------|------------|
+| HOME1 | T1  | 2026-09-16 | Person-specific Home job visibility | **Code on this PR.** Home shows only jobs with a Crew Scheduler `assignments` row this week for the logged-in `team_members.name` (Schedule `flipName` match) plus this user's open punch. Field entitlement / admin does not list all jobs. `job_crew` is not used. View All stays broad. Chris has no `crew`/`assignments` rows; stale April open punch is outside the Home lookback — expected Home count is **0**. Live `call_log` jobs remain on View All. TF2 writes still paused. Expo Go is not valid. |
 | TF1 | T2   | 2026-09-16 | First EAS iOS production build + TestFlight internal submit | **Build 3 verified on Chris’s physical iPhone.** 1.0.0 (3) / EAS `236f4c9e-f334-436e-8711-b4a5204d9c14` from `main` `7561aa9` (PR #6 remote versioning). Submitted to App Store Connect, processed, Testing in internal Team (Expo). Update from broken build 2 → 3 launched (no white screen), SIGN IN rendered, entitled account signed in through the activation gate, Home (“Hey, Chris”) loaded, real production jobs loaded, a real job opened. **History kept:** 1.0.0 (2) / `3a37b775-b503-4eeb-8b2e-52cfb71f052d` is the white-screen binary; `d6ce5a1f-d5ec-4473-9600-47229f8e6df1` had the env fix but reused build number 2 and Apple rejected the submit — do not resubmit it. Writes were not tested (see **TF2**). Expo `@chris7berger/field-command`. Team `7T26H9PCGN` paid ADP Individual. Expo Go is not valid. |
 | AG1 | T1   | 2026-09-15 | Fail-close Field Command activation + canonical writer identity | **LIVE on `main` (`54e4ceb`, PR #2).** Login requires an active `team_members` row whose `apps` includes `"field"`. Writes use `team_members.id` only. Chris runtime-verified on iPhone 17 simulator via `npx expo run:ios`. **Expo Go is not a valid runtime** (PowerSync / OP-SQLite). |
 | REL1 | T1   | 2026-09-15 | EAS / TestFlight iOS release-readiness configuration | **CONFIG READY, no binary yet.** On `main` (`05c838d`, PR #3). Expo `@chris7berger/field-command`, projectId `9b762fbe-c0d1-46a6-a2bb-efe014e7b489`. Production profile is store/TestFlight. Explicit `EXPO_PUBLIC_*` in `eas.json` + `.env`; runtime fail-closed; no service-role. First build is **TF1**. Team `7T26H9PCGN` is the paid ADP Individual team and **is** the TestFlight signing path. |

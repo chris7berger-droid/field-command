@@ -212,7 +212,7 @@ export default function App() {
             initialRouteName="Home"
           >
             <Stack.Screen name="Home">
-              {(props) => <HomeScreen {...props} userName={user.name} />}
+              {(props) => <HomeScreen {...props} user={user} />}
             </Stack.Screen>
             <Stack.Screen name="JobList">
               {(props) => <JobListScreen {...props} user={user} />}
