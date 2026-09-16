@@ -5,7 +5,7 @@ that completes, defers, or discovers an item. Status values: `Open`,
 `In Progress`, `Blocked`, `Done` (move Done items to the Completed Log
 at the bottom and out of the active table within a session or two).
 
-Last updated: 2026-09-15 (**TF1:** TestFlight build 2 white-screen = dynamic env.js. Static inline fix pending merge. No build 3 yet.)
+Last updated: 2026-09-15 (**TF1:** env-inline fix is on `main`; duplicate iOS build 2 blocked submit. Remote versioning pending merge so next production is 1.0.0 (3).)
 
 ## Tier definitions
 
@@ -40,7 +40,7 @@ Last updated: 2026-09-15 (**TF1:** TestFlight build 2 white-screen = dynamic env
 
 | ID  | Tier | Status | Item | Source | Notes |
 |-----|------|--------|------|--------|-------|
-| TF1 | T2   | Open   | First EAS iOS production build + TestFlight internal submit | REL1 2026-09-15 | **Build 2 on TestFlight is unusable.** 1.0.0 (2) / EAS `3a37b775-b503-4eeb-8b2e-52cfb71f052d` white-screens on launch: `env.js` used `process.env[name]`, which Expo does not inline in production. Fix on `fix/testflight-static-env-inline`. After merge, ship **build 3**. Team `7T26H9PCGN` is paid ADP Individual. Expo `@chris7berger/field-command`. Expo Go is not valid. |
+| TF1 | T2   | Open   | First EAS iOS production build + TestFlight internal submit | REL1 2026-09-15 | **Build 2 on TestFlight is unusable** (white screen): 1.0.0 (2) / EAS `3a37b775-b503-4eeb-8b2e-52cfb71f052d`. Env-inline fix is on `main` (`ddbf6bf`, PR #5). A second production binary from that commit (`d6ce5a1f-d5ec-4473-9600-47229f8e6df1`) **also numbered 1.0.0 (2)** because local autoIncrement mutated `app.json` in the working tree and never committed; Apple submit failed (duplicate). Do **not** resubmit `d6ce5a1f`. Versioning fix on `fix/eas-remote-ios-build-number`: `appVersionSource: remote`, remote last iOS buildNumber seeded to **2**, so the next production build is **1.0.0 (3)**. Team `7T26H9PCGN` is paid ADP Individual. Expo `@chris7berger/field-command`. Expo Go is not valid. |
 
 ---
 
