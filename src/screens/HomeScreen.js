@@ -1,5 +1,6 @@
 /**
  * Home — this person's assigned work for the week, not every live job.
+ * Prefer assignments.team_member_id === user.id; name-match only when that UUID is blank.
  * SOD / MOD / EOD / PRT start dim, light up as the crew knocks them out.
  * The week strip is a record of those days, not hours.
  * View All is the broader escape hatch; do not apply this filter there.
@@ -122,7 +123,8 @@ export default function HomeScreen({ navigation, user }) {
   );
 
   const { data: assignRows } = useQuery(
-    `SELECT j.call_log_id AS call_log_id, a.crew_name AS crew_name, a.date AS date
+    `SELECT j.call_log_id AS call_log_id, a.crew_name AS crew_name, a.date AS date,
+            a.team_member_id AS team_member_id
        FROM assignments a
        INNER JOIN jobs j ON j.id = a.job_id
       WHERE ${LIVE_JOB_FILTER}`
@@ -164,6 +166,7 @@ export default function HomeScreen({ navigation, user }) {
     const assignedIds = assignedCallLogIds({
       assignRows,
       memberName: userName,
+      userId,
       monday,
       sunday,
     });
@@ -200,7 +203,7 @@ export default function HomeScreen({ navigation, user }) {
     }
     return list;
   }, [
-    jobs, liveJobRows, tripsByJob, sowDatesByJob, assignRows, userName,
+    jobs, liveJobRows, tripsByJob, sowDatesByJob, assignRows, userName, userId,
     openPunch, onJobId, openJobRows, monday, sunday,
   ]);
 
