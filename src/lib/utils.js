@@ -46,6 +46,13 @@ export function localYmd(d = new Date()) {
   return `${y}-${m}-${day}`;
 }
 
+// Home week-strip / TODAY SOD uses localYmd(created_at). Daily Log must too.
+export function createdOnLocalYmd(createdAt, ymd) {
+  if (!createdAt || !ymd) return false;
+  const when = new Date(createdAt);
+  return !Number.isNaN(when.getTime()) && localYmd(when) === ymd;
+}
+
 export function addDaysYmd(ymd, n) {
   const [y, m, d] = String(ymd).split('-').map(Number);
   return localYmd(new Date(y, m - 1, d + n));

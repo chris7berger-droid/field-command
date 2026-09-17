@@ -16,7 +16,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
-import { parseJSON, parseJSONArray, tod } from '../../lib/utils';
+import { parseJSON, parseJSONArray, tod, createdOnLocalYmd } from '../../lib/utils';
 import { uploadPhotos } from '../../lib/photos';
 import LinenBackground from '../../components/LinenBackground';
 import { mergeDaysByDate } from './TasksTab';
@@ -268,14 +268,23 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
   }, [existingReport, allSowTasks]);
 
   // ── Daily Log State ─────────────────────────────────────
+  // Bound with local YYYY-MM-DD, not toISOString(). PowerSync stores
+  // created_at like `2026-09-17 21:44:43.961+00` (space). That string is
+  // lexicographically < `2026-09-17T07:00:00.000Z`, so an ISO midnight
+  // cutoff dropped today's SOD while Home still counted it via localYmd.
   const { data: logEntries, isLoading: logLoading } = useQuery(
     `SELECT * FROM daily_log_entries WHERE job_id = ? AND created_at >= ? ORDER BY created_at ASC`,
-    [jobId, new Date(today + 'T00:00:00').toISOString()]
+    [jobId, today]
+  );
+
+  const todaysLogEntries = useMemo(
+    () => (logEntries || []).filter((e) => createdOnLocalYmd(e.created_at, today)),
+    [logEntries, today]
   );
 
   const submittedTypes = useMemo(() => {
-    return new Set((logEntries || []).map(e => e.entry_type));
-  }, [logEntries]);
+    return new Set(todaysLogEntries.map((e) => e.entry_type));
+  }, [todaysLogEntries]);
 
   const [logType, setLogType] = useState(
     initialLogType === 'SOD' || initialLogType === 'MOD' || initialLogType === 'EOD' || initialLogType === 'OTHER'
@@ -630,9 +639,9 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
             </View>
 
             {/* Submitted entries */}
-            {(logEntries || []).length > 0 && (
+            {todaysLogEntries.length > 0 && (
               <View style={styles.logHistory}>
-                {(logEntries || []).map((entry) => {
+                {todaysLogEntries.map((entry) => {
                   const photos = parseJSON(entry.photos, []);
                   return (
                     <View key={entry.id} style={styles.logEntryCard}>
