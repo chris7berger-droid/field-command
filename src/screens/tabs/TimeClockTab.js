@@ -76,6 +76,9 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
   const pendingAction = useRef(null);
   const clockInSubmitGuard = useRef(createClockInSubmitGuard()).current;
   const [clockInProcessing, setClockInProcessing] = useState(false);
+  const clockOutSubmitGuard = useRef(createClockInSubmitGuard()).current;
+  const clockOutConfirming = useRef(false);
+  const [clockOutProcessing, setClockOutProcessing] = useState(false);
 
   // ── Load job data ─────────────────────────────────────
   const { data: jobRows } = useQuery(
@@ -263,17 +266,29 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     setClockInProcessing(false);
   }, [clockInSubmitGuard]);
 
+  const releaseClockOutSubmit = useCallback(() => {
+    clockOutConfirming.current = false;
+    clockOutSubmitGuard.end();
+    setClockOutProcessing(false);
+  }, [clockOutSubmitGuard]);
+
   // ── Execute current step ──────────────────────────────
   const executeStep = useCallback(async (gpsOverride = false) => {
     if (!currentStep || !currentStep.label) return;
     const isClockIn = currentStep.punch === 'clock_in';
+    const isClockOut = currentStep.punch === 'clock_out';
     if (isClockIn && !gpsOverride) {
       if (!clockInSubmitGuard.tryBegin()) return;
       setClockInProcessing(true);
     }
+    if (isClockOut) {
+      if (!clockOutSubmitGuard.tryBegin()) return;
+      setClockOutProcessing(true);
+    }
     const otherId = openClockJobId(allTodayPunches);
     if (otherId && otherId !== String(jobId)) {
       if (isClockIn) releaseClockInSubmit();
+      if (isClockOut) releaseClockOutSubmit();
       const other = otherJobRows?.[0];
       const label = jobNumber(other) || other?.job_name || 'that job';
       const copy = switchJobClockCopy(label);
@@ -295,6 +310,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
       gpsResult = await checkGPS();
     } catch (e) {
       if (isClockIn) releaseClockInSubmit();
+      if (isClockOut) releaseClockOutSubmit();
       if (e.message === 'LOCATION_DENIED') {
         Alert.alert('Location Required', 'GPS location is required to clock in. Please enable location access in Settings.');
         return;
@@ -308,10 +324,11 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
       setShowGeofenceModal(true);
       return;
     }
-    if (currentStep.punch === 'clock_out') {
+    if (isClockOut) {
       const logTypes = new Set((todayLogs || []).map((e) => e.entry_type));
       const missing = missingClockOutDuties({ logTypes, prtSubmitted });
       if (missing.length > 0) {
+        releaseClockOutSubmit();
         Alert.alert(
           'Finish the day first',
           `Before clocking out: ${missing.join(', ')}.`,
@@ -319,6 +336,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
         return;
       }
       setShowClockOutModal(true);
+      setClockOutProcessing(false);
       return;
     }
 
@@ -336,15 +354,18 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     Vibration.vibrate(100);
     advanceStep();
     if (isClockIn) releaseClockInSubmit();
-  }, [currentStep, checkGPS, writePunch, advanceStep, prtSubmitted, todayLogs, allTodayPunches, otherJobRows, jobId, navigation, handleWriteError, clockInSubmitGuard, releaseClockInSubmit]);
+  }, [currentStep, checkGPS, writePunch, advanceStep, prtSubmitted, todayLogs, allTodayPunches, otherJobRows, jobId, navigation, handleWriteError, clockInSubmitGuard, releaseClockInSubmit, clockOutSubmitGuard, releaseClockOutSubmit]);
 
   // ── Confirm clock out ─────────────────────────────────
   const confirmClockOut = useCallback(async () => {
-    setShowClockOutModal(false);
+    if (clockOutConfirming.current) return;
+    clockOutConfirming.current = true;
+    setClockOutProcessing(true);
     let position, weatherData;
     try {
       ({ position, weatherData } = await checkGPS());
     } catch (e) {
+      releaseClockOutSubmit();
       if (e.message === 'LOCATION_DENIED') {
         Alert.alert('Location Required', 'GPS location is required to clock out. Please enable location access in Settings.');
         return;
@@ -354,14 +375,17 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     try {
       await writePunch('clock_out', position, weatherData);
     } catch (e) {
+      releaseClockOutSubmit();
       if (!handleWriteError(e, `Could not save clock out: ${e?.message || 'unknown error'}.`)) {
         throw e;
       }
       return;
     }
     Vibration.vibrate([100, 50, 100]);
+    setShowClockOutModal(false);
     advanceStep();
-  }, [checkGPS, writePunch, advanceStep, handleWriteError]);
+    releaseClockOutSubmit();
+  }, [checkGPS, writePunch, advanceStep, handleWriteError, releaseClockOutSubmit]);
 
   // ── Auto lunch end ────────────────────────────────────
   const handleAutoLunchEnd = useCallback(async () => {
@@ -501,16 +525,31 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
             currentStep.punch === 'clock_out' && styles.bigButtonOut,
             currentStep.punch.startsWith('drive') && styles.bigButtonDrive,
             clockInProcessing && currentStep.punch === 'clock_in' && styles.bigButtonProcessing,
+            clockOutProcessing && currentStep.punch === 'clock_out' && styles.bigButtonProcessing,
           ]}
-          activeOpacity={clockInProcessing && currentStep.punch === 'clock_in' ? 1 : 0.7}
-          disabled={clockInProcessing && currentStep.punch === 'clock_in'}
+          activeOpacity={
+            (clockInProcessing && currentStep.punch === 'clock_in')
+            || (clockOutProcessing && currentStep.punch === 'clock_out')
+              ? 1 : 0.7
+          }
+          disabled={
+            (clockInProcessing && currentStep.punch === 'clock_in')
+            || (clockOutProcessing && currentStep.punch === 'clock_out')
+          }
           onPress={() => executeStep()}
         >
           <Text style={styles.bigButtonText}>
-            {clockInProcessing && currentStep.punch === 'clock_in' ? 'CLOCKING IN...' : currentStep.label}
+            {clockInProcessing && currentStep.punch === 'clock_in'
+              ? 'CLOCKING IN...'
+              : clockOutProcessing && currentStep.punch === 'clock_out'
+                ? 'CLOCKING OUT...'
+                : currentStep.label}
           </Text>
           <Text style={styles.bigButtonSub}>
-            {clockInProcessing && currentStep.punch === 'clock_in' ? 'Please wait' : currentStep.hint}
+            {(clockInProcessing && currentStep.punch === 'clock_in')
+              || (clockOutProcessing && currentStep.punch === 'clock_out')
+              ? 'Please wait'
+              : currentStep.hint}
           </Text>
         </TouchableOpacity>
       ) : null}
@@ -600,20 +639,32 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
       </Modal>
 
       {/* Clock Out Modal */}
-      <Modal visible={showClockOutModal} transparent animationType="fade" onRequestClose={() => setShowClockOutModal(false)}>
+      <Modal visible={showClockOutModal} transparent animationType="fade" onRequestClose={() => { if (!clockOutConfirming.current) { setShowClockOutModal(false); releaseClockOutSubmit(); } }}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>CLOCK OUT</Text>
-            <Text style={styles.modalBody}>Shift time: {elapsedStr}</Text>
+            <Text style={styles.modalBody}>
+              {clockOutProcessing ? 'Please wait' : `Shift time: ${elapsedStr}`}
+            </Text>
             {!punchHistory.some((p) => p.punch_type === 'lunch_start') && (
               <View style={styles.noLunchWarning}><Text style={styles.noLunchText}>No lunch taken — this will be flagged.</Text></View>
             )}
             <View style={styles.modalButtons}>
-              <TouchableOpacity style={styles.modalBtnCancel} onPress={() => setShowClockOutModal(false)}>
+              <TouchableOpacity
+                style={styles.modalBtnCancel}
+                disabled={clockOutConfirming.current}
+                onPress={() => { if (clockOutConfirming.current) return; setShowClockOutModal(false); releaseClockOutSubmit(); }}
+              >
                 <Text style={styles.modalBtnCancelText}>CANCEL</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.modalBtnConfirm} onPress={confirmClockOut}>
-                <Text style={styles.modalBtnConfirmText}>CONFIRM</Text>
+              <TouchableOpacity
+                style={[styles.modalBtnConfirm, clockOutProcessing && { opacity: 0.7 }]}
+                disabled={clockOutProcessing}
+                onPress={confirmClockOut}
+              >
+                <Text style={styles.modalBtnConfirmText}>
+                  {clockOutProcessing ? 'CLOCKING OUT...' : 'CONFIRM'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>

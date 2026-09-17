@@ -70,7 +70,8 @@ check('TimeClockTab wires the CLOCK IN in-flight guard', () => {
 check('TimeClockTab shows processing copy and disables CLOCK IN', () => {
   assert.ok(tabSrc.includes("CLOCKING IN..."));
   assert.ok(tabSrc.includes("Please wait"));
-  assert.ok(tabSrc.includes('disabled={clockInProcessing && currentStep.punch === \'clock_in\'}'));
+  assert.ok(tabSrc.includes("clockInProcessing && currentStep.punch === 'clock_in'"));
+  assert.ok(tabSrc.includes('disabled={'));
 });
 
 check('failed CLOCK IN (location denied / write error) releases the lock', () => {
