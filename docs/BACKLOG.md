@@ -5,7 +5,7 @@ that completes, defers, or discovers an item. Status values: `Open`,
 `In Progress`, `Blocked`, `Done` (move Done items to the Completed Log
 at the bottom and out of the active table within a session or two).
 
-Last updated: 2026-09-17 (**VIS-2** PR: Home follows Schedule assignment, not Sales stage. Not merged.)
+Last updated: 2026-09-17 (**VIS-2 live on Build 5:** Home follows Schedule assignment. Chris currently unassigned. TF2 paused.)
 
 ## Tier definitions
 
@@ -29,7 +29,6 @@ Last updated: 2026-09-17 (**VIS-2** PR: Home follows Schedule assignment, not Sa
 
 | ID  | Tier | Status | Item | Source | Notes |
 |-----|------|--------|------|--------|-------|
-| VIS-2 | T2 | **In Progress (PR, not merged)** | Home admits assigned live Schedule jobs without Sales-stage veto | VIS-1 live (3712 can sync) | `buildHomeWeekJobs`: assignment week + live `jobs` (or this-user open punch). Home `call_log` query no longer stage-filters. View All / PowerSync unchanged. #10176 expected on Home after merge + reload. TF2 paused. Handoff v29. |
 | FE1 | T2   | Open   | Field SOW tab: label which WTC/trade each task belongs to on merged days | D1 multi-WTC smoke 2026-06-16 | When two+ WTCs land work on the same calendar date, `mergeDaysByDate` concatenates their tasks into one flat "PLANNED TASKS" list with **no trade attribution** — crew can't tell `100% Solids Epoxy` work from `Caulking` work (verified live on job #10159, 6/23). Data is ready: every merged task already carries `work_type_name` (`buildMergedDay` tags it). **Design direction (discussed 2026-06-16, not yet built):** Option A — group tasks under small work-type sub-headers within the existing day tab (recommended; preserves the day-centric mental model, scales to N trades); optionally Option B — a compact per-task trade badge/pill. Avoid Option C (per-WTC swipe carousel) — adds a second nav axis, crew could miss a trade. Build in a dedicated design/build session (design conversations stay planning-only). |
 | FE3 | T2   | Open   | Office punch-time correction after a missed clock-out | Field overnight 2026-09-13 (Chris) | Crew forgot-to-clock-out now punches out immediately and flags the office. **Later:** ask the crew what time they should have punched out, match other crew members' clock-out on that job, and let the office apply the real time. Needs the office time-clock / timesheet work that is not in Field yet. Do not guess hours on the phone. |
 
@@ -41,7 +40,7 @@ Last updated: 2026-09-17 (**VIS-2** PR: Home follows Schedule assignment, not Sa
 
 | ID  | Tier | Status | Item | Source | Notes |
 |-----|------|--------|------|--------|-------|
-| TF2 | T1   | Open   | Controlled production write verification on TestFlight 1.0.0 (3) | TF1 2026-09-16 | **Paused until Home visibility is on a TestFlight binary and Chris confirms empty Home.** After HOME1, Home is person-specific: Chris has no Crew Scheduler assignments, so Home should be empty; View All stays the live-job hatch. Do not activate additional crew users. **No production writes yet.** When unpaused: one write path at a time — time punch, daily log, PRT, material check, photo submission. Expo Go is not valid. |
+| TF2 | T1   | Open   | Controlled production write verification on TestFlight | TF1 2026-09-16; VIS-2 Build 5 | **Paused.** Home visibility is proven on Build 5: assigned #10176 appeared, opened, then left Home immediately when Chris was unassigned. Chris is currently unassigned. Do not activate additional crew. **No production writes yet.** When Chris unpauses: one write path at a time — time punch, daily log, PRT, material check, photo submission. Expo Go is not valid. |
 
 ---
 
@@ -58,6 +57,7 @@ Last updated: 2026-09-17 (**VIS-2** PR: Home follows Schedule assignment, not Sa
 
 | ID  | Tier | Closed     | Item | Resolution |
 |-----|------|------------|------|------------|
+| VIS-2 | T2 | 2026-09-17 | Home follows Schedule assignment, not Sales stage | **LIVE on Build 5 (physical iPhone).** PR #11 squash-merged `0c5c8e8`. Home admits assigned live Schedule jobs without a Sales-stage veto. Fixture: Chris assigned 9/14+9/15 → Home showed #10176 and opened it; unassign → job left Home immediately via PowerSync, no refresh. Chris currently unassigned. No Field writes. View All / Refresh not started. TF2 paused. Handoff v30. |
 | VIS-1 | T2 | 2026-09-17 | Schedule-driven `call_log` sync for live Parked/Scheduled jobs | **LIVE.** PR #10 squash-merged `09ebde5`. Development dashboard: `parked_scheduled_call_log` parameter bucket off live Parked/Scheduled `jobs.call_log_id`. `all_data` Sales-stage filter unchanged. Assignments SELECT still includes `team_member_id`. Publication unchanged. No instance reset. #10176 / 3712 sync-eligible; Home still hides it (VIS-2). TF2 paused. Handoff v28. |
 | IDENT-6 | T2 | 2026-09-17 | Field Home reads canonical assignment identity | **LIVE.** PR #9 squash-merged `c1f9983`. Home prefers `assignments.team_member_id === user.id`; HOME1 name match only when that UUID is null/blank. Development dashboard SELECT deployed 2026-09-17: `SELECT id, job_id, crew_name, date, mobilization_id, team_member_id FROM assignments`. Publication unchanged. No instance reset. Chris still has no assignments — expected Home 0. TF2 paused. Handoff v27. |
 | HOME1 | T1  | 2026-09-16 | Person-specific Home job visibility | **Code on this PR.** Home shows only jobs with a Crew Scheduler `assignments` row this week for the logged-in `team_members.name` (Schedule `flipName` match) plus this user's open punch. Field entitlement / admin does not list all jobs. `job_crew` is not used. View All stays broad. Chris has no `crew`/`assignments` rows; stale April open punch is outside the Home lookback — expected Home count is **0**. Live `call_log` jobs remain on View All. TF2 writes still paused. Expo Go is not valid. |
