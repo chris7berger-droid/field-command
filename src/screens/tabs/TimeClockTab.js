@@ -27,6 +27,7 @@ import { fetchWeather } from '../../lib/weather';
 import { missingClockOutDuties, openClockJobId, switchJobClockCopy, punchLookbackDate, shiftDate, punchesForOpenShift } from '../../lib/dayDuty';
 import { jobNumber } from '../../lib/trips';
 import { requireCanonicalTeamMemberId, isMissingTeamMemberIdError } from '../../lib/activation';
+import { createClockInSubmitGuard } from '../../lib/clockInSubmitGuard';
 import LinenBackground from '../../components/LinenBackground';
 
 const LUNCH_DURATION_MS = 30 * 60 * 1000;
@@ -73,6 +74,8 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
 
   const lunchTimerRef = useRef(null);
   const pendingAction = useRef(null);
+  const clockInSubmitGuard = useRef(createClockInSubmitGuard()).current;
+  const [clockInProcessing, setClockInProcessing] = useState(false);
 
   // ── Load job data ─────────────────────────────────────
   const { data: jobRows } = useQuery(
@@ -255,11 +258,22 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     setCurrentStepIdx((prev) => prev + 1);
   }, []);
 
+  const releaseClockInSubmit = useCallback(() => {
+    clockInSubmitGuard.end();
+    setClockInProcessing(false);
+  }, [clockInSubmitGuard]);
+
   // ── Execute current step ──────────────────────────────
   const executeStep = useCallback(async (gpsOverride = false) => {
     if (!currentStep || !currentStep.label) return;
+    const isClockIn = currentStep.punch === 'clock_in';
+    if (isClockIn && !gpsOverride) {
+      if (!clockInSubmitGuard.tryBegin()) return;
+      setClockInProcessing(true);
+    }
     const otherId = openClockJobId(allTodayPunches);
     if (otherId && otherId !== String(jobId)) {
+      if (isClockIn) releaseClockInSubmit();
       const other = otherJobRows?.[0];
       const label = jobNumber(other) || other?.job_name || 'that job';
       const copy = switchJobClockCopy(label);
@@ -280,6 +294,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     try {
       gpsResult = await checkGPS();
     } catch (e) {
+      if (isClockIn) releaseClockInSubmit();
       if (e.message === 'LOCATION_DENIED') {
         Alert.alert('Location Required', 'GPS location is required to clock in. Please enable location access in Settings.');
         return;
@@ -288,7 +303,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     }
     const { position, weatherData, onSite } = gpsResult;
 
-    if (currentStep.punch === 'clock_in' && !onSite && !gpsOverride) {
+    if (isClockIn && !onSite && !gpsOverride) {
       pendingAction.current = () => executeStep(true);
       setShowGeofenceModal(true);
       return;
@@ -310,16 +325,18 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     try {
       await writePunch(currentStep.punch, position, weatherData, gpsOverride);
     } catch (e) {
+      if (isClockIn) releaseClockInSubmit();
       if (!handleWriteError(e, `Could not save this punch: ${e?.message || 'unknown error'}.`)) {
         throw e;
       }
       return;
     }
-    if (currentStep.punch === 'clock_in') setShiftStart(new Date());
+    if (isClockIn) setShiftStart(new Date());
     if (currentStep.punch === 'lunch_start') setLunchStart(new Date());
     Vibration.vibrate(100);
     advanceStep();
-  }, [currentStep, checkGPS, writePunch, advanceStep, prtSubmitted, todayLogs, allTodayPunches, otherJobRows, jobId, navigation, handleWriteError]);
+    if (isClockIn) releaseClockInSubmit();
+  }, [currentStep, checkGPS, writePunch, advanceStep, prtSubmitted, todayLogs, allTodayPunches, otherJobRows, jobId, navigation, handleWriteError, clockInSubmitGuard, releaseClockInSubmit]);
 
   // ── Confirm clock out ─────────────────────────────────
   const confirmClockOut = useCallback(async () => {
@@ -483,12 +500,18 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
             styles.bigButton,
             currentStep.punch === 'clock_out' && styles.bigButtonOut,
             currentStep.punch.startsWith('drive') && styles.bigButtonDrive,
+            clockInProcessing && currentStep.punch === 'clock_in' && styles.bigButtonProcessing,
           ]}
-          activeOpacity={0.7}
+          activeOpacity={clockInProcessing && currentStep.punch === 'clock_in' ? 1 : 0.7}
+          disabled={clockInProcessing && currentStep.punch === 'clock_in'}
           onPress={() => executeStep()}
         >
-          <Text style={styles.bigButtonText}>{currentStep.label}</Text>
-          <Text style={styles.bigButtonSub}>{currentStep.hint}</Text>
+          <Text style={styles.bigButtonText}>
+            {clockInProcessing && currentStep.punch === 'clock_in' ? 'CLOCKING IN...' : currentStep.label}
+          </Text>
+          <Text style={styles.bigButtonSub}>
+            {clockInProcessing && currentStep.punch === 'clock_in' ? 'Please wait' : currentStep.hint}
+          </Text>
         </TouchableOpacity>
       ) : null}
 
@@ -559,13 +582,13 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
       </View>
 
       {/* Geofence Modal */}
-      <Modal visible={showGeofenceModal} transparent animationType="fade" onRequestClose={() => setShowGeofenceModal(false)}>
+      <Modal visible={showGeofenceModal} transparent animationType="fade" onRequestClose={() => { setShowGeofenceModal(false); pendingAction.current = null; releaseClockInSubmit(); }}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>OFF-SITE WARNING</Text>
             <Text style={styles.modalBody}>You are {gpsDistance}m from the job site. Your punch will be flagged for office review.</Text>
             <View style={styles.modalButtons}>
-              <TouchableOpacity style={styles.modalBtnCancel} onPress={() => { setShowGeofenceModal(false); pendingAction.current = null; }}>
+              <TouchableOpacity style={styles.modalBtnCancel} onPress={() => { setShowGeofenceModal(false); pendingAction.current = null; releaseClockInSubmit(); }}>
                 <Text style={styles.modalBtnCancelText}>CANCEL</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.modalBtnConfirm} onPress={handleGeofenceOverride}>
@@ -681,6 +704,7 @@ const styles = StyleSheet.create({
   bigButton: { backgroundColor: C.dark, borderRadius: 12, paddingVertical: 28, alignItems: 'center', marginBottom: S.md, minHeight: 100, justifyContent: 'center' },
   bigButtonOut: { borderWidth: 2, borderColor: C.red },
   bigButtonDrive: { borderWidth: 2, borderColor: C.pw },
+  bigButtonProcessing: { opacity: 0.7 },
   bigButtonText: { fontFamily: F.display, fontSize: 28, color: C.teal, letterSpacing: 3 },
   bigButtonSub: { fontFamily: F.body, fontSize: 13, color: C.textFaint, marginTop: 6 },
 
