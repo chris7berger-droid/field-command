@@ -14,11 +14,11 @@ const sandbox = { module: { exports: {} }, exports: {}, console };
 vm.runInNewContext(`${src}\nmodule.exports = {
   flipName, namesMatch, assignmentInHomeWeek, assignmentTeamMemberId,
   assignmentMatchesUser, assignedCallLogIds,
-  punchesForEmployee, homeVisibleJobIds,
+  punchesForEmployee, homeVisibleJobIds, buildHomeWeekJobs,
 };`, sandbox);
 const {
   flipName, namesMatch, assignmentTeamMemberId, assignedCallLogIds,
-  punchesForEmployee, homeVisibleJobIds,
+  punchesForEmployee, homeVisibleJobIds, buildHomeWeekJobs,
 } = sandbox.module.exports;
 
 let failed = 0;
@@ -230,6 +230,164 @@ check("another user's punch does not preserve job", () => {
   assert.ok(!visible.has('8888'));
 });
 
+const JOB_10176 = {
+  id: '3712',
+  job_number: 10176,
+  job_name: 'TEST Exact Penny Pricing',
+  stage: 'Wants Bid',
+};
+const chrisAssign10176 = [
+  {
+    call_log_id: '3712',
+    crew_name: 'Chris Berger',
+    date: '2026-09-14',
+    team_member_id: CHRIS_ID,
+  },
+  {
+    call_log_id: '3712',
+    crew_name: 'Chris Berger',
+    date: '2026-09-15',
+    team_member_id: CHRIS_ID,
+  },
+];
+const live10176 = [{ call_log_id: '3712' }];
+
+check('VIS-2: assigned Parked job with Sales Wants Bid appears on Home', () => {
+  const list = buildHomeWeekJobs({
+    callLogRows: [JOB_10176],
+    assignRows: chrisAssign10176,
+    liveJobRows: live10176,
+    memberName: 'Chris Berger',
+    userId: CHRIS_ID,
+    monday,
+    sunday,
+    openPunch: null,
+  });
+  assert.strictEqual(list.length, 1);
+  assert.strictEqual(String(list[0].id), '3712');
+  assert.strictEqual(list[0].stage, 'Wants Bid');
+});
+
+check('VIS-2: assigned Sold Sales stage is not vetoed', () => {
+  const sold = { id: '3847', job_number: 10252, stage: 'Sold' };
+  const list = buildHomeWeekJobs({
+    callLogRows: [sold],
+    assignRows: [{
+      call_log_id: '3847',
+      crew_name: 'Chris Berger',
+      date: '2026-09-16',
+      team_member_id: CHRIS_ID,
+    }],
+    liveJobRows: [{ call_log_id: '3847' }],
+    memberName: 'Chris Berger',
+    userId: CHRIS_ID,
+    monday,
+    sunday,
+    openPunch: null,
+  });
+  assert.strictEqual(list.length, 1);
+  assert.strictEqual(String(list[0].id), '3847');
+  assert.strictEqual(list[0].stage, 'Sold');
+});
+
+check('VIS-2: unassigned job stays hidden', () => {
+  const list = buildHomeWeekJobs({
+    callLogRows: [JOB_10176, { id: '9999', stage: 'Parked' }],
+    assignRows: chrisAssign10176,
+    liveJobRows: [...live10176, { call_log_id: '9999' }],
+    memberName: 'Chris Berger',
+    userId: CHRIS_ID,
+    monday,
+    sunday,
+    openPunch: null,
+  });
+  assert.ok(list.some((j) => String(j.id) === '3712'));
+  assert.ok(!list.some((j) => String(j.id) === '9999'));
+});
+
+check('VIS-2: deleted Schedule job stays hidden', () => {
+  const list = buildHomeWeekJobs({
+    callLogRows: [JOB_10176],
+    assignRows: chrisAssign10176,
+    liveJobRows: [],
+    memberName: 'Chris Berger',
+    userId: CHRIS_ID,
+    monday,
+    sunday,
+    openPunch: null,
+  });
+  assert.strictEqual(list.length, 0);
+});
+
+check('VIS-2: missing call_log parent is skipped, not thrown', () => {
+  const list = buildHomeWeekJobs({
+    callLogRows: [],
+    assignRows: chrisAssign10176,
+    liveJobRows: live10176,
+    memberName: 'Chris Berger',
+    userId: CHRIS_ID,
+    monday,
+    sunday,
+    openPunch: null,
+  });
+  assert.strictEqual(list.length, 0);
+});
+
+check('VIS-2: UUID identity still beats matching crew_name', () => {
+  const list = buildHomeWeekJobs({
+    callLogRows: [{ id: '201', stage: 'Parked' }],
+    assignRows: [{
+      call_log_id: '201',
+      crew_name: 'Berger, Chris',
+      date: '2026-09-16',
+      team_member_id: TROY_ID,
+    }],
+    liveJobRows: [{ call_log_id: '201' }],
+    memberName: 'Chris Berger',
+    userId: CHRIS_ID,
+    monday,
+    sunday,
+    openPunch: null,
+  });
+  assert.strictEqual(list.length, 0);
+});
+
+check('VIS-2: null UUID still uses legacy name fallback', () => {
+  const list = buildHomeWeekJobs({
+    callLogRows: [{ id: '202', stage: 'Wants Bid' }],
+    assignRows: [{
+      call_log_id: '202',
+      crew_name: 'Berger, Chris',
+      date: '2026-09-16',
+      team_member_id: null,
+    }],
+    liveJobRows: [{ call_log_id: '202' }],
+    memberName: 'Chris Berger',
+    userId: CHRIS_ID,
+    monday,
+    sunday,
+    openPunch: null,
+  });
+  assert.strictEqual(list.length, 1);
+  assert.strictEqual(String(list[0].id), '202');
+});
+
+check('VIS-2: this-user open punch still preserves job', () => {
+  const list = buildHomeWeekJobs({
+    callLogRows: [],
+    extraCallLogRows: [{ id: '3712', stage: 'Wants Bid' }],
+    assignRows: [],
+    liveJobRows: [],
+    memberName: 'Chris Berger',
+    userId: CHRIS_ID,
+    monday,
+    sunday,
+    openPunch: { employee_id: CHRIS_ID, job_id: '3712', punch_type: 'clock_in' },
+  });
+  assert.strictEqual(list.length, 1);
+  assert.strictEqual(String(list[0].id), '3712');
+});
+
 check('View All / JobList is still unfiltered by person', () => {
   const jobList = fs.readFileSync(
     path.join(__dirname, '../src/screens/JobListScreen.js'),
@@ -242,11 +400,15 @@ check('View All / JobList is still unfiltered by person', () => {
   ));
 });
 
-check('Home selects assignments.team_member_id', () => {
+check('Home admits from Schedule assignment, not Sales stage', () => {
   const home = fs.readFileSync(
     path.join(__dirname, '../src/screens/HomeScreen.js'),
     'utf8'
   );
+  assert.ok(home.includes('buildHomeWeekJobs'));
+  assert.ok(home.includes('SELECT * FROM call_log ORDER BY date ASC'));
+  assert.ok(!home.includes("WHERE stage IN ('Scheduled', 'In Progress', 'Parked', 'mobilized', 'in_progress')"));
+  assert.ok(home.includes('LIVE_JOB_FILTER'));
   assert.ok(home.includes('a.team_member_id AS team_member_id'));
   assert.ok(home.includes('userId,'));
 });
