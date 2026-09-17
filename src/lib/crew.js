@@ -74,6 +74,64 @@ export function homeVisibleJobIds({ assignedIds, openPunch }) {
   return ids;
 }
 
+/**
+ * Home cards: this person's Home-week assignments on live Schedule jobs,
+ * plus this-user open punch. Sales stage does not veto. Missing call_log
+ * parents are skipped (no crash). liveJobRows null skips the live-index
+ * check; an array (including empty) requires assigned ids to be present.
+ */
+export function buildHomeWeekJobs({
+  callLogRows,
+  extraCallLogRows,
+  assignRows,
+  liveJobRows,
+  memberName,
+  userId,
+  monday,
+  sunday,
+  openPunch,
+}) {
+  const assignedIds = assignedCallLogIds({
+    assignRows, memberName, userId, monday, sunday,
+  });
+  const visibleIds = homeVisibleJobIds({ assignedIds, openPunch });
+  const liveIds = liveJobRows == null
+    ? null
+    : new Set(
+        (liveJobRows || [])
+          .map((r) => String(r.call_log_id || ''))
+          .filter((id) => id && id !== 'null')
+      );
+
+  const byId = new Map();
+  for (const job of [...(callLogRows || []), ...(extraCallLogRows || [])]) {
+    if (!job || job.id == null) continue;
+    const id = String(job.id);
+    if (!byId.has(id)) byId.set(id, job);
+  }
+
+  const onJobId = openPunch ? String(openPunch.job_id || '') : '';
+  const list = [];
+  const seen = new Set();
+
+  const admit = (id) => {
+    if (!id || id === 'null' || seen.has(id) || !visibleIds.has(id)) return;
+    const isOpen = !!onJobId && id === onJobId;
+    if (assignedIds.has(id) && liveIds && !liveIds.has(id) && !isOpen) return;
+    const job = byId.get(id);
+    if (!job) return;
+    seen.add(id);
+    list.push(job);
+  };
+
+  for (const job of (callLogRows || [])) {
+    if (job?.id == null) continue;
+    admit(String(job.id));
+  }
+  if (onJobId) admit(onJobId);
+  return list;
+}
+
 export function uniqueNames(rows, key = 'name') {
   const names = [];
   for (const r of (rows || [])) {

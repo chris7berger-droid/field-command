@@ -1,9 +1,8 @@
 /**
  * Home — this person's assigned work for the week, not every live job.
  * Prefer assignments.team_member_id === user.id; name-match only when that UUID is blank.
- * SOD / MOD / EOD / PRT start dim, light up as the crew knocks them out.
- * The week strip is a record of those days, not hours.
- * View All is the broader escape hatch; do not apply this filter there.
+ * Admission is Schedule assignment + live jobs row (or this-user open punch).
+ * Sales call_log.stage does not veto. View All is the broader escape hatch.
  */
 import React, { useMemo, useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, StyleSheet } from 'react-native';
@@ -12,9 +11,8 @@ import { C, F, S } from '../lib/tokens';
 import { parseJSON, parseJSONArray, tod, addDaysYmd, localYmd } from '../lib/utils';
 import {
   LIVE_JOB_FILTER, jobNumber, tripLine, tripsByCallLog,
-  collectSowDates, isActiveThisWeek,
 } from '../lib/trips';
-import { crewByCallLog, crewLine, assignedCallLogIds, homeVisibleJobIds } from '../lib/crew';
+import { crewByCallLog, crewLine, buildHomeWeekJobs } from '../lib/crew';
 import {
   DUTY_LOGS, PRT_DUTY, dutyState, pickSowDaysForPrt,
   openClockInPunch, punchDay, punchLookbackDate, reportClockGate, reportClockCopy,
@@ -97,7 +95,7 @@ export default function HomeScreen({ navigation, user }) {
   );
 
   const { data: jobs } = useQuery(
-    `SELECT * FROM call_log WHERE stage IN ('Scheduled', 'In Progress', 'Parked', 'mobilized', 'in_progress') ORDER BY date ASC`
+    `SELECT * FROM call_log ORDER BY date ASC`
   );
 
   const { data: mobRows } = useQuery(
@@ -135,10 +133,6 @@ export default function HomeScreen({ navigation, user }) {
     [mobRows, wtcTripRows]
   );
 
-  const sowDatesByJob = useMemo(
-    () => collectSowDates(wtcTripRows),
-    [wtcTripRows]
-  );
   const crewAssignByJob = useMemo(
     () => crewByCallLog(assignRows),
     [assignRows]
@@ -162,50 +156,17 @@ export default function HomeScreen({ navigation, user }) {
     [onJobId || '__none__']
   );
 
-  const weekJobs = useMemo(() => {
-    const assignedIds = assignedCallLogIds({
-      assignRows,
-      memberName: userName,
-      userId,
-      monday,
-      sunday,
-    });
-    const visibleIds = homeVisibleJobIds({ assignedIds, openPunch });
-    const liveByCl = new Map();
-    for (const row of (liveJobRows || [])) {
-      const id = String(row.call_log_id);
-      if (!liveByCl.has(id)) liveByCl.set(id, []);
-      liveByCl.get(id).push(row);
-    }
-    const isLiveThisWeek = (id) => {
-      const trips = tripsByJob.get(id);
-      const sowDates = sowDatesByJob.get(id);
-      const lives = liveByCl.get(id) || [];
-      if (lives.length === 0) {
-        return isActiveThisWeek({ trips, sowDates }, monday, sunday);
-      }
-      return lives.some((row) => isActiveThisWeek({
-        trips,
-        sowDates,
-        scheduledStart: row.scheduled_start || row.start_date,
-        scheduledEnd: row.scheduled_end || row.end_date,
-      }, monday, sunday));
-    };
-    const list = (jobs || []).filter((job) => {
-      const id = String(job.id);
-      if (!visibleIds.has(id)) return false;
-      if (onJobId && id === onJobId) return true;
-      return isLiveThisWeek(id);
-    });
-    if (onJobId && !list.some((job) => String(job.id) === onJobId)) {
-      const openJob = (openJobRows || []).find((j) => String(j.id) === onJobId);
-      if (openJob) list.push(openJob);
-    }
-    return list;
-  }, [
-    jobs, liveJobRows, tripsByJob, sowDatesByJob, assignRows, userName, userId,
-    openPunch, onJobId, openJobRows, monday, sunday,
-  ]);
+  const weekJobs = useMemo(() => buildHomeWeekJobs({
+    callLogRows: jobs,
+    extraCallLogRows: openJobRows,
+    assignRows,
+    liveJobRows,
+    memberName: userName,
+    userId,
+    monday,
+    sunday,
+    openPunch,
+  }), [jobs, openJobRows, assignRows, liveJobRows, userName, userId, monday, sunday, openPunch]);
 
   const { data: weekReports } = useQuery(
     `SELECT id, job_id, report_date, status, tasks FROM daily_production_reports

@@ -5,7 +5,7 @@ that completes, defers, or discovers an item. Status values: `Open`,
 `In Progress`, `Blocked`, `Done` (move Done items to the Completed Log
 at the bottom and out of the active table within a session or two).
 
-Last updated: 2026-09-17 (**VIS-1 live:** parked_scheduled_call_log deployed. Home still stage-gates — VIS-2 next. TF2 paused.)
+Last updated: 2026-09-17 (**VIS-2** PR: Home follows Schedule assignment, not Sales stage. Not merged.)
 
 ## Tier definitions
 
@@ -29,7 +29,7 @@ Last updated: 2026-09-17 (**VIS-1 live:** parked_scheduled_call_log deployed. Ho
 
 | ID  | Tier | Status | Item | Source | Notes |
 |-----|------|--------|------|--------|-------|
-| VIS-2 | T2 | Open | Home must admit Schedule-visible jobs whose Sales stage is excluded | VIS-1 live (3712 can sync, Home still hides it) | Home still `call_log.stage IN ('Scheduled','In Progress','Parked','mobilized','in_progress')`. Do not change View All / Refresh in this slice unless Chris expands. Leave Chris → 10176 assignment untouched. TF2 paused. |
+| VIS-2 | T2 | **In Progress (PR, not merged)** | Home admits assigned live Schedule jobs without Sales-stage veto | VIS-1 live (3712 can sync) | `buildHomeWeekJobs`: assignment week + live `jobs` (or this-user open punch). Home `call_log` query no longer stage-filters. View All / PowerSync unchanged. #10176 expected on Home after merge + reload. TF2 paused. Handoff v29. |
 | FE1 | T2   | Open   | Field SOW tab: label which WTC/trade each task belongs to on merged days | D1 multi-WTC smoke 2026-06-16 | When two+ WTCs land work on the same calendar date, `mergeDaysByDate` concatenates their tasks into one flat "PLANNED TASKS" list with **no trade attribution** — crew can't tell `100% Solids Epoxy` work from `Caulking` work (verified live on job #10159, 6/23). Data is ready: every merged task already carries `work_type_name` (`buildMergedDay` tags it). **Design direction (discussed 2026-06-16, not yet built):** Option A — group tasks under small work-type sub-headers within the existing day tab (recommended; preserves the day-centric mental model, scales to N trades); optionally Option B — a compact per-task trade badge/pill. Avoid Option C (per-WTC swipe carousel) — adds a second nav axis, crew could miss a trade. Build in a dedicated design/build session (design conversations stay planning-only). |
 | FE3 | T2   | Open   | Office punch-time correction after a missed clock-out | Field overnight 2026-09-13 (Chris) | Crew forgot-to-clock-out now punches out immediately and flags the office. **Later:** ask the crew what time they should have punched out, match other crew members' clock-out on that job, and let the office apply the real time. Needs the office time-clock / timesheet work that is not in Field yet. Do not guess hours on the phone. |
 
