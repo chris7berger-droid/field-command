@@ -48,7 +48,7 @@ answer those four. Full contract + open decisions:
 ## PowerSync Cloud
 - **Instance URL:** https://69d81f100e377e689729db98.powersync.journeyapps.com
 - **Dashboard:** dashboard.powersync.com, org chris7berger-droid, project Field Command
-- **Synced tables (12):** call_log, proposal_wtc, job_wtcs, team_members, job_crew, jobs, time_punches, daily_production_reports, daily_log_entries, job_material_checks, job_mobilizations, assignments. Live dashboard is still the global `all_data` bucket (IDENT-6 assignments SELECT deployed 2026-09-17). Committed VIS-1 (not dashboard-deployed) adds a second global parameter bucket `parked_scheduled_call_log` so live Parked/Scheduled jobs deliver their `call_log` parent even when Sales stage is excluded. No per-user filtering. Publication unchanged.
+- **Synced tables (12):** call_log, proposal_wtc, job_wtcs, team_members, job_crew, jobs, time_punches, daily_production_reports, daily_log_entries, job_material_checks, job_mobilizations, assignments. Live dashboard (2026-09-17): global `all_data` plus `parked_scheduled_call_log` so live Parked/Scheduled jobs deliver their `call_log` parent even when Sales stage is excluded. Assignments SELECT includes `team_member_id`. No per-user filtering. Publication unchanged.
 - **Client Auth:** Supabase Auth with JWT secret
 - **Single-tenant** — global bucket, no per-user filtering yet
 
