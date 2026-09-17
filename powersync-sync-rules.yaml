@@ -1,9 +1,16 @@
 # PowerSync Sync Rules for Field Command
 # Currently deployed to Development instance via PowerSync Dashboard
 #
-# Single bucket (all_data) — no per-user filtering yet.
+# Single-tenant global buckets — no per-user filtering yet.
 # TODO: Add crew-filtered buckets (admin_all + crew_assigned) once
 # per-crew job filtering is implemented in the app.
+#
+# VIS-1: Legacy Sync Rules cannot JOIN/subquery in a data query
+# (docs.powersync.com/sync/supported-sql — Sync Rules: "Not supported:
+# subqueries, JOINs, CTEs"). Schedule-driven call_log rows use a second
+# global bucket whose parameter query reads live Parked/Scheduled jobs.
+# Assignment-window sync is not in this slice: #10176 is Parked, so the
+# status rule is sufficient and does not pull historical Sold/Ongoing.
 
 bucket_definitions:
   all_data:
@@ -26,3 +33,13 @@ bucket_definitions:
       - SELECT * FROM job_material_checks
       - SELECT id, job_id, seq, label, start_date, end_date FROM job_mobilizations
       - SELECT id, job_id, crew_name, date, mobilization_id, team_member_id FROM assignments
+
+  parked_scheduled_call_log:
+    parameters: |
+      SELECT call_log_id
+        FROM jobs
+       WHERE (deleted IS NULL OR deleted = 'No')
+         AND (status = 'Parked' OR status = 'Scheduled')
+         AND call_log_id IS NOT NULL
+    data:
+      - SELECT * FROM call_log WHERE id = bucket.call_log_id
