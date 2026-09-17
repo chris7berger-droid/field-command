@@ -1,9 +1,8 @@
 /**
- * Crew names. Schedule's source of truth is assignments.crew_name
- * (job_id = jobs.id). job_crew / jobs.lead are fallbacks.
- *
- * Home membership joins team_members.name to assignments.crew_name via the
- * same Last, First flip Schedule uses. Do not use job_crew for Home.
+ * Crew names and Home membership.
+ * Canonical assignment identity is assignments.team_member_id.
+ * crew_name is display plus the legacy Home fallback when that UUID is blank.
+ * job_crew is not used for Home.
  */
 
 export function flipName(n) {
@@ -32,12 +31,29 @@ export function assignmentInHomeWeek(date, monday, sunday) {
   return d >= monday && d <= sunday;
 }
 
-export function assignedCallLogIds({ assignRows, memberName, monday, sunday }) {
+export function assignmentTeamMemberId(value) {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw || raw.toLowerCase() === 'null' || raw.toLowerCase() === 'undefined') return null;
+  return raw;
+}
+
+export function assignmentMatchesUser(row, { userId, memberName } = {}) {
+  const assignedId = assignmentTeamMemberId(row?.team_member_id);
+  if (assignedId) {
+    const me = String(userId || '').trim();
+    return !!me && assignedId === me;
+  }
+  return namesMatch(memberName, row?.crew_name);
+}
+
+export function assignedCallLogIds({ assignRows, memberName, userId, monday, sunday }) {
   const ids = new Set();
-  if (!flipName(memberName)) return ids;
+  const me = String(userId || '').trim();
+  if (!me && !flipName(memberName)) return ids;
   for (const r of (assignRows || [])) {
-    if (!namesMatch(memberName, r.crew_name)) continue;
     if (!assignmentInHomeWeek(r.date, monday, sunday)) continue;
+    if (!assignmentMatchesUser(r, { userId: me, memberName })) continue;
     const id = String(r.call_log_id || '');
     if (!id || id === 'null') continue;
     ids.add(id);

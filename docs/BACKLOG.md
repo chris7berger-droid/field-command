@@ -5,7 +5,7 @@ that completes, defers, or discovers an item. Status values: `Open`,
 `In Progress`, `Blocked`, `Done` (move Done items to the Completed Log
 at the bottom and out of the active table within a session or two).
 
-Last updated: 2026-09-16 (**HOME1:** person-specific Home. TF2 writes still paused.)
+Last updated: 2026-09-16 (**IDENT-6:** Field Home prefers `assignments.team_member_id`. TF2 writes still paused. PowerSync dashboard deploy pending.)
 
 ## Tier definitions
 
@@ -29,6 +29,7 @@ Last updated: 2026-09-16 (**HOME1:** person-specific Home. TF2 writes still paus
 
 | ID  | Tier | Status | Item | Source | Notes |
 |-----|------|--------|------|--------|-------|
+| IDENT-6 | T2 | **In Progress (PR, not merged)** | Field Home reads canonical `assignments.team_member_id` | IDENT-5 live (eligible 0) | UUID match first (`assignments.team_member_id === team_members.id`). Name fallback only when that UUID is null/blank. A non-null UUID for someone else never falls back to name. No bulk crew link, no Chris link, no DB/RLS/Schedule change. Committed PowerSync YAML SELECT adds `team_member_id`; dashboard deploy is **pending Chris approval**. TF2 paused. Handoff v25. |
 | FE1 | T2   | Open   | Field SOW tab: label which WTC/trade each task belongs to on merged days | D1 multi-WTC smoke 2026-06-16 | When two+ WTCs land work on the same calendar date, `mergeDaysByDate` concatenates their tasks into one flat "PLANNED TASKS" list with **no trade attribution** — crew can't tell `100% Solids Epoxy` work from `Caulking` work (verified live on job #10159, 6/23). Data is ready: every merged task already carries `work_type_name` (`buildMergedDay` tags it). **Design direction (discussed 2026-06-16, not yet built):** Option A — group tasks under small work-type sub-headers within the existing day tab (recommended; preserves the day-centric mental model, scales to N trades); optionally Option B — a compact per-task trade badge/pill. Avoid Option C (per-WTC swipe carousel) — adds a second nav axis, crew could miss a trade. Build in a dedicated design/build session (design conversations stay planning-only). |
 | FE3 | T2   | Open   | Office punch-time correction after a missed clock-out | Field overnight 2026-09-13 (Chris) | Crew forgot-to-clock-out now punches out immediately and flags the office. **Later:** ask the crew what time they should have punched out, match other crew members' clock-out on that job, and let the office apply the real time. Needs the office time-clock / timesheet work that is not in Field yet. Do not guess hours on the phone. |
 

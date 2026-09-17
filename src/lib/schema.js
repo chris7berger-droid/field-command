@@ -7,7 +7,7 @@
  *   - team_members    — crew roster
  *   - job_crew        — crew-to-job assignments (drives per-user sync filtering)
  *   - job_mobilizations — Schedule trips (seq + label); Field reads titles only
- *   - assignments     — Schedule crew days (crew_name); Field reads names only
+ *   - assignments     — Schedule crew days (crew_name + optional team_member_id)
  *
  * Read-write tables (written locally, synced up to Supabase):
  *   - time_punches          — clock in/out, lunch, drive time
@@ -279,14 +279,16 @@ const daily_log_entries = new Table(
   { indexes: { by_job_date: ['job_id', 'created_at'] } }
 );
 
-// assignments — Schedule crew days. Read-only. crew_name is the office
-// allocation. job_id is jobs.job_id (Field jobs.id).
+// assignments — Schedule crew days. Read-only. job_id is jobs.job_id
+// (Field jobs.id). team_member_id is canonical identity when present;
+// crew_name remains the display / legacy-Home fallback.
 const assignments = new Table(
   {
     job_id:             column.integer,
     crew_name:          column.text,
     date:               column.text,
     mobilization_id:    column.text,
+    team_member_id:     column.text,
   },
   { indexes: { by_job: ['job_id'] } }
 );
