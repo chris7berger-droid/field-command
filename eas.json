@@ -16,6 +16,17 @@
         "EXPO_PUBLIC_POWERSYNC_URL": "https://69d81f100e377e689729db98.powersync.journeyapps.com"
       }
     },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://pbgvgjjuhnpsumnowuym.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_v7XktVvkAlX7y5f6xoFjng_AaLaWKoK",
+        "EXPO_PUBLIC_POWERSYNC_URL": "https://69d81f100e377e689729db98.powersync.journeyapps.com"
+      }
+    },
     "production": {
       "distribution": "store",
       "autoIncrement": true,
