@@ -5,7 +5,7 @@ that completes, defers, or discovers an item. Status values: `Open`,
 `In Progress`, `Blocked`, `Done` (move Done items to the Completed Log
 at the bottom and out of the active table within a session or two).
 
-Last updated: 2026-09-17 (**VIS-2 live on Build 5:** Home follows Schedule assignment. Chris currently unassigned. TF2 paused.)
+Last updated: 2026-09-18 (**ANDROID-1:** EAS Android internal APK `preview` profile on `main`. TF2 paused.)
 
 ## Tier definitions
 
@@ -57,6 +57,7 @@ Last updated: 2026-09-17 (**VIS-2 live on Build 5:** Home follows Schedule assig
 
 | ID  | Tier | Closed     | Item | Resolution |
 |-----|------|------------|------|------------|
+| ANDROID-1 | T2 | 2026-09-18 | Native Android baseline + EAS internal APK preview profile | **LIVE on `main` (`2ec56b6`, PR #12).** `eas.json` `preview`: internal APK, same `EXPO_PUBLIC_*` env as the successful EAS build `01e92d30-1d8d-43e6-9939-78de30f6c49a` (Mac-local `a9c9749b`, never pushed). No Play submit. No field-phone install yet. No TF2 writes. Expo Go is not valid. Handoff v31. |
 | VIS-2 | T2 | 2026-09-17 | Home follows Schedule assignment, not Sales stage | **LIVE on Build 5 (physical iPhone).** PR #11 squash-merged `0c5c8e8`. Home admits assigned live Schedule jobs without a Sales-stage veto. Fixture: Chris assigned 9/14+9/15 → Home showed #10176 and opened it; unassign → job left Home immediately via PowerSync, no refresh. Chris currently unassigned. No Field writes. View All / Refresh not started. TF2 paused. Handoff v30. |
 | VIS-1 | T2 | 2026-09-17 | Schedule-driven `call_log` sync for live Parked/Scheduled jobs | **LIVE.** PR #10 squash-merged `09ebde5`. Development dashboard: `parked_scheduled_call_log` parameter bucket off live Parked/Scheduled `jobs.call_log_id`. `all_data` Sales-stage filter unchanged. Assignments SELECT still includes `team_member_id`. Publication unchanged. No instance reset. #10176 / 3712 sync-eligible; Home still hides it (VIS-2). TF2 paused. Handoff v28. |
 | IDENT-6 | T2 | 2026-09-17 | Field Home reads canonical assignment identity | **LIVE.** PR #9 squash-merged `c1f9983`. Home prefers `assignments.team_member_id === user.id`; HOME1 name match only when that UUID is null/blank. Development dashboard SELECT deployed 2026-09-17: `SELECT id, job_id, crew_name, date, mobilization_id, team_member_id FROM assignments`. Publication unchanged. No instance reset. Chris still has no assignments — expected Home 0. TF2 paused. Handoff v27. |
