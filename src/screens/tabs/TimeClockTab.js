@@ -22,7 +22,7 @@ import {
 import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
 import { fmtTime, tod } from '../../lib/utils';
-import { getCurrentPosition, checkGeofence, DEMO_POSITIONS } from '../../lib/location';
+import { getCurrentPosition, getClockInPosition, checkGeofence, DEMO_POSITIONS } from '../../lib/location';
 import { fetchWeather } from '../../lib/weather';
 import { missingClockOutDuties, openClockJobId, switchJobClockCopy, punchLookbackDate, shiftDate, punchesForOpenShift } from '../../lib/dayDuty';
 import { jobNumber } from '../../lib/trips';
@@ -242,6 +242,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
         new Date().toISOString(),
       ]
     );
+    return id;
   }, [db, jobId, employeeId]);
 
   const handleWriteError = useCallback((error, message) => {
@@ -305,11 +306,67 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
       ]);
       return;
     }
+    if (isClockIn) {
+      let position;
+      let onSite = true;
+      try {
+        if (job) {
+          if (demoMode) {
+            position = demoOnSite ? DEMO_POSITIONS.onSite : DEMO_POSITIONS.offSite;
+          } else {
+            position = await getClockInPosition();
+          }
+          const geo = checkGeofence(position, job);
+          setGpsDistance(geo.distanceMeters);
+          onSite = geo.onSite;
+        }
+      } catch (e) {
+        releaseClockInSubmit();
+        if (e.message === 'LOCATION_DENIED') {
+          Alert.alert('Location Required', 'GPS location is required to clock in. Please enable location access in Settings.');
+          return;
+        }
+        throw e;
+      }
+      if (!onSite && !gpsOverride) {
+        pendingAction.current = () => executeStep(true);
+        setShowGeofenceModal(true);
+        return;
+      }
+      const weatherPromise = position?.latitude != null
+        ? fetchWeather(position.latitude, position.longitude)
+        : Promise.resolve(null);
+      let punchId;
+      try {
+        punchId = await writePunch(currentStep.punch, position, null, gpsOverride);
+      } catch (e) {
+        releaseClockInSubmit();
+        if (!handleWriteError(e, `Could not save this punch: ${e?.message || 'unknown error'}.`)) {
+          throw e;
+        }
+        return;
+      }
+      setShiftStart(new Date());
+      Vibration.vibrate(100);
+      advanceStep();
+      releaseClockInSubmit();
+      weatherPromise
+        .then((weatherData) => {
+          if (!punchId || !weatherData) return;
+          setWeather(weatherData);
+          return db.execute(
+            `UPDATE time_punches SET weather_temp=?, weather_condition=?, synced=0 WHERE id=?`,
+            [weatherData.temp_f, weatherData.condition, punchId]
+          );
+        })
+        .catch(() => {});
+      return;
+    }
+
     let gpsResult;
     try {
       gpsResult = await checkGPS();
     } catch (e) {
-      if (isClockIn) releaseClockInSubmit();
       if (isClockOut) releaseClockOutSubmit();
       if (e.message === 'LOCATION_DENIED') {
         Alert.alert('Location Required', 'GPS location is required to clock in. Please enable location access in Settings.');
@@ -319,11 +376,6 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     }
     const { position, weatherData, onSite } = gpsResult;
 
-    if (isClockIn && !onSite && !gpsOverride) {
-      pendingAction.current = () => executeStep(true);
-      setShowGeofenceModal(true);
-      return;
-    }
     if (isClockOut) {
       const logTypes = new Set((todayLogs || []).map((e) => e.entry_type));
       const missing = missingClockOutDuties({ logTypes, prtSubmitted });
@@ -343,18 +395,15 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     try {
       await writePunch(currentStep.punch, position, weatherData, gpsOverride);
     } catch (e) {
-      if (isClockIn) releaseClockInSubmit();
       if (!handleWriteError(e, `Could not save this punch: ${e?.message || 'unknown error'}.`)) {
         throw e;
       }
       return;
     }
-    if (isClockIn) setShiftStart(new Date());
     if (currentStep.punch === 'lunch_start') setLunchStart(new Date());
     Vibration.vibrate(100);
     advanceStep();
-    if (isClockIn) releaseClockInSubmit();
-  }, [currentStep, checkGPS, writePunch, advanceStep, prtSubmitted, todayLogs, allTodayPunches, otherJobRows, jobId, navigation, handleWriteError, clockInSubmitGuard, releaseClockInSubmit, clockOutSubmitGuard, releaseClockOutSubmit]);
+  }, [currentStep, checkGPS, writePunch, advanceStep, prtSubmitted, todayLogs, allTodayPunches, otherJobRows, jobId, job, demoMode, demoOnSite, db, navigation, handleWriteError, clockInSubmitGuard, releaseClockInSubmit, clockOutSubmitGuard, releaseClockOutSubmit]);
 
   // ── Confirm clock out ─────────────────────────────────
   const confirmClockOut = useCallback(async () => {

@@ -6,6 +6,28 @@
  */
 import * as Location from 'expo-location';
 
+/** Last-known Clock In fix must be this fresh. */
+export const CLOCK_IN_MAX_AGE_MS = 30 * 1000;
+/** Accept last-known / Balanced only at or inside this uncertainty radius. */
+export const CLOCK_IN_MAX_ACCURACY_M = 50;
+
+function latLng(loc) {
+  return {
+    latitude: loc.coords.latitude,
+    longitude: loc.coords.longitude,
+  };
+}
+
+export function clockInFixIsAccurate(coords) {
+  const acc = coords?.accuracy;
+  return typeof acc === 'number' && Number.isFinite(acc) && acc <= CLOCK_IN_MAX_ACCURACY_M;
+}
+
+export function clockInFixIsFresh(loc, now = Date.now()) {
+  if (!loc || typeof loc.timestamp !== 'number' || !Number.isFinite(loc.timestamp)) return false;
+  return now - loc.timestamp <= CLOCK_IN_MAX_AGE_MS;
+}
+
 /**
  * Request location permissions and get current position.
  * Throws if permission denied — GPS is mandatory for punching.
@@ -24,6 +46,37 @@ export async function getCurrentPosition() {
     latitude: loc.coords.latitude,
     longitude: loc.coords.longitude,
   };
+}
+
+/**
+ * CLOCK IN GPS: last-known (fresh + ≤50m) → Balanced (≤50m) → High.
+ * GPS remains mandatory. Clock Out still uses getCurrentPosition (High).
+ */
+export async function getClockInPosition() {
+  const { status } = await Location.requestForegroundPermissionsAsync();
+  if (status !== 'granted') {
+    throw new Error('LOCATION_DENIED');
+  }
+
+  const lastKnown = await Location.getLastKnownPositionAsync({
+    maxAge: CLOCK_IN_MAX_AGE_MS,
+    requiredAccuracy: CLOCK_IN_MAX_ACCURACY_M,
+  });
+  if (lastKnown && clockInFixIsFresh(lastKnown) && clockInFixIsAccurate(lastKnown.coords)) {
+    return latLng(lastKnown);
+  }
+
+  const balanced = await Location.getCurrentPositionAsync({
+    accuracy: Location.Accuracy.Balanced,
+  });
+  if (clockInFixIsAccurate(balanced?.coords)) {
+    return latLng(balanced);
+  }
+
+  const high = await Location.getCurrentPositionAsync({
+    accuracy: Location.Accuracy.High,
+  });
+  return latLng(high);
 }
 
 /**
