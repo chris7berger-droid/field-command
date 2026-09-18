@@ -27,9 +27,9 @@ import { requireCanonicalTeamMemberId, isMissingTeamMemberIdError } from '../../
 import {
   asPrtTaskList,
   cancelSubmittedPrtEdit,
-  editSowTasks,
+  prtEditDebugSnapshot,
+  prtSectionView,
   seedTaskEntries,
-  showSubmittedPrtReadback,
   visiblePrtEditEntries,
 } from '../../lib/prtEdit';
 
@@ -232,31 +232,38 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
   );
   const existingReport = existingReports?.[0] || null;
   const prtSubmitted = existingReport?.status === 'submitted' || existingReport?.status === 'approved';
-  const submittedPrtTasks = useMemo(
-    () => asPrtTaskList(existingReport?.tasks),
+  // Same parse the submitted card uses — do not use a second parser here.
+  const cardTasks = useMemo(
+    () => parseJSONArray(existingReport?.tasks, []),
     [existingReport?.tasks]
   );
-  const editSowSource = useMemo(
-    () => editSowTasks(todaySowTasks, submittedPrtTasks),
-    [todaySowTasks, submittedPrtTasks]
-  );
+  const submittedSnapshotRef = useRef({ tasks: [], status: null, id: null });
+  if (prtSubmitted && cardTasks.some((t) => Number(t.pct_today) > 0)) {
+    submittedSnapshotRef.current = {
+      tasks: cardTasks,
+      status: existingReport?.status || null,
+      id: existingReport?.id || null,
+    };
+  }
+  const savedForEdit = cardTasks.length > 0 ? cardTasks : submittedSnapshotRef.current.tasks;
 
   const [taskEntries, setTaskEntries] = useState([]);
   const [prtSubmitting, setPrtSubmitting] = useState(false);
   const [editing, setEditing] = useState(false); // re-open a submitted PRT to edit + resubmit
 
-  const sowSource = editing ? editSowSource : todaySowTasks;
+  const sowSource = todaySowTasks;
   const sowSourceKey = sowSource.map((t) => `${t.description}:${t.target_pct}`).join('|');
-  const showPrtReadback = showSubmittedPrtReadback(prtSubmitted, editing, taskEntries);
+  const prtView = prtSectionView({
+    submitted: prtSubmitted || submittedSnapshotRef.current.tasks.some((t) => Number(t.pct_today) > 0),
+    editing,
+    taskEntries,
+    savedTasks: savedForEdit,
+  });
 
+  // First-submit seed only. Edit list is owned by startEdit until cancel/submit.
   useEffect(() => {
-    if (prtSubmitted && !editing) return;
-    if (editing) {
-      const next = visiblePrtEditEntries(todaySowTasks, existingReport?.tasks);
-      if (next.length === 0) return;
-      setTaskEntries((prev) => (sameTaskEntries(prev, next) ? prev : next));
-      return;
-    }
+    if (editing) return;
+    if (prtSubmitted) return;
     if (sowSource.length === 0) return;
     const saved = asPrtTaskList(existingReport?.tasks);
     setTaskEntries((prev) => {
@@ -264,20 +271,54 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
       if (sameTaskEntries(prev, next)) return prev;
       return next;
     });
-  }, [existingReport?.id, existingReport?.status, existingReport?.tasks, sowSourceKey, todaySowTasks, prtSubmitted, editing]);
+  }, [existingReport?.id, existingReport?.status, existingReport?.tasks, sowSourceKey, prtSubmitted, editing]);
+
+  useEffect(() => {
+    if (!__DEV__) return;
+    console.log('[PRT-EDIT]', prtEditDebugSnapshot({
+      editing,
+      prtSubmitted,
+      workDate,
+      reportId: existingReport?.id,
+      status: existingReport?.status,
+      tasksType: existingReport ? typeof existingReport.tasks : 'none',
+      tasksIsArray: Array.isArray(existingReport?.tasks),
+      parsedCount: cardTasks.length,
+      taskEntriesCount: taskEntries.length,
+      view: prtView,
+    }));
+  }, [editing, prtSubmitted, workDate, existingReport, cardTasks.length, taskEntries.length, prtView]);
 
   const updateTask = useCallback((idx, field, value) => {
     setTaskEntries((prev) => { const u = [...prev]; u[idx] = { ...u[idx], [field]: value }; return u; });
   }, []);
 
-  // Re-open a submitted PRT: today's SOW tasks plus any already-submitted
-  // descriptions, prefilled. Other-day SOW tasks (e.g. Prep) stay off Edit.
+  // Seed from the exact rows the submitted card is showing, plus today's SOW.
   const startEdit = useCallback(() => {
-    const entries = visiblePrtEditEntries(todaySowTasks, existingReport?.tasks);
+    const saved = savedForEdit;
+    const entries = visiblePrtEditEntries(todaySowTasks, saved);
+    if (__DEV__) {
+      console.log('[PRT-EDIT] startEdit', prtEditDebugSnapshot({
+        editing: true,
+        prtSubmitted,
+        workDate,
+        reportId: existingReport?.id,
+        status: existingReport?.status,
+        tasksType: existingReport ? typeof existingReport.tasks : 'none',
+        tasksIsArray: Array.isArray(existingReport?.tasks),
+        parsedCount: saved.length,
+        taskEntriesCount: entries.length,
+        view: prtSectionView({
+          submitted: true,
+          editing: true,
+          taskEntries: entries,
+          savedTasks: saved,
+        }),
+      }));
+    }
     setTaskEntries(entries);
-    if (entries.length === 0) return;
     setEditing(true);
-  }, [todaySowTasks, existingReport]);
+  }, [savedForEdit, todaySowTasks, prtSubmitted, workDate, existingReport]);
 
   const cancelEdit = useCallback(() => {
     const next = cancelSubmittedPrtEdit();
@@ -596,12 +637,12 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
                 : 'Enter your daily % for each task. Hit the target or beat it.'}
             </Text>
 
-            {showPrtReadback ? (
+            {prtView.showReadback ? (
               <View style={styles.submittedCard}>
                 <View style={styles.sentBadge}><Text style={styles.sentBadgeText}>✓ SENT TO OFFICE</Text></View>
                 <Text style={styles.submittedTitle}>PRT SUBMITTED</Text>
                 <Text style={styles.submittedBody}>Today's production has been sent to the office.</Text>
-                {parseJSONArray(existingReport?.tasks, []).filter((t) => Number(t.pct_today) > 0).map((t, idx) => {
+                {asPrtTaskList(savedForEdit).filter((t) => Number(t.pct_today) > 0).map((t, idx) => {
                   const rung = prtRung(t.pct_today, t.target_pct);
                   return (
                   <View key={idx} style={styles.submittedTask}>
@@ -631,7 +672,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
               </View>
             ) : (
               <>
-                {taskEntries.map((task, idx) => {
+                {(prtView.showEditor ? prtView.editor : taskEntries).map((task, idx) => {
                   const rung = prtRung(task.pct_today, task.target_pct);
                   const hit = rung?.badge === 'HIT TARGET';
                   return (
@@ -843,7 +884,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
 
       {/* Sticky action bar — always visible so the crew can save from anywhere
           in the form, not only after scrolling to the bottom. */}
-      {section === 'prt' && (!prtSubmitted || editing) && taskEntries.length > 0 && (
+      {section === 'prt' && prtView.showSticky && (
         <View style={styles.stickyBar}>
           {editing ? (
             <TouchableOpacity

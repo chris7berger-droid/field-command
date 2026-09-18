@@ -1,6 +1,10 @@
 /**
  * Submitted-PRT edit: today's SOW tasks plus already-submitted descriptions.
  * Cancel is a local state flip — no draft, status, or submit write.
+ *
+ * The PRT body is a view-model, not "editing XOR readback". Hide the
+ * submitted card only when the editor actually has cards to show. A live
+ * query miss (prtSubmitted false) must not blank the screen.
  */
 
 export function asPrtTaskList(raw) {
@@ -69,20 +73,75 @@ export function seedTaskEntries(source, saved, local) {
   });
 }
 
-/** Seed the Edit list. Never drop already-submitted worked tasks. */
 export function visiblePrtEditEntries(todaySowTasks, submittedRaw) {
   const submitted = asPrtTaskList(submittedRaw);
   const source = editSowTasks(todaySowTasks, submitted);
-  return seedTaskEntries(source, submitted, []);
+  const seeded = seedTaskEntries(source, submitted, []);
+  if (seeded.length > 0) return seeded;
+  const fromCard = submitted.filter((t) => Number(t.pct_today) > 0);
+  if (fromCard.length === 0) return [];
+  return seedTaskEntries(
+    fromCard.map((t, i) => ({
+      description: taskDescription(t) || `Task ${i + 1}`,
+      target_pct: Number(t.target_pct) || 0,
+    })),
+    submitted,
+    []
+  );
+}
+
+/**
+ * Render decision for the PRT body. Never chrome-only after Edit.
+ * showEditor only when there are cards; otherwise keep readback if we
+ * have submitted work (live row or saved task rows the card already showed).
+ */
+export function prtSectionView({ submitted, editing, taskEntries, savedTasks }) {
+  const saved = asPrtTaskList(savedTasks);
+  const hasSubmittedWork = Boolean(submitted) || saved.some((t) => Number(t.pct_today) > 0);
+  const editor = Array.isArray(taskEntries) ? taskEntries : [];
+  const showEditor = Boolean(editing && editor.length > 0);
+  const showReadback = Boolean(hasSubmittedWork && !showEditor);
+  const showSticky = Boolean(showEditor || (!hasSubmittedWork && editor.length > 0));
+  return { showEditor, showReadback, showSticky, editor, hasSubmittedWork };
 }
 
 export function showSubmittedPrtReadback(prtSubmitted, editing, taskEntries) {
-  if (!prtSubmitted) return false;
-  if (!editing) return true;
-  return !taskEntries || taskEntries.length === 0;
+  return prtSectionView({
+    submitted: prtSubmitted,
+    editing,
+    taskEntries,
+    savedTasks: [],
+  }).showReadback;
 }
 
-/** Exit edit. Caller must apply this without db.execute / draft / submit. */
 export function cancelSubmittedPrtEdit() {
   return { editing: false, writes: [] };
+}
+
+export function prtEditDebugSnapshot({
+  editing,
+  prtSubmitted,
+  workDate,
+  reportId,
+  status,
+  tasksType,
+  tasksIsArray,
+  parsedCount,
+  taskEntriesCount,
+  view,
+}) {
+  return {
+    editing: Boolean(editing),
+    prtSubmitted: Boolean(prtSubmitted),
+    workDate: workDate || null,
+    reportId: reportId || null,
+    status: status || null,
+    tasksType: tasksType || null,
+    tasksIsArray: Boolean(tasksIsArray),
+    parsedCount: Number(parsedCount) || 0,
+    taskEntriesCount: Number(taskEntriesCount) || 0,
+    showEditor: Boolean(view?.showEditor),
+    showReadback: Boolean(view?.showReadback),
+    showSticky: Boolean(view?.showSticky),
+  };
 }
