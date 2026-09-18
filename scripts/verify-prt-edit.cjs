@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
  * Submitted-PRT edit: today-scoped tasks + no-write CANCEL.
+ * Edit must never produce a blank PRT body.
  */
 const assert = require('assert');
 const fs = require('fs');
@@ -11,10 +12,17 @@ const libPath = path.join(__dirname, '../src/lib/prtEdit.js');
 const libSrc = fs.readFileSync(libPath, 'utf8').replace(/^export /gm, '');
 const sandbox = { module: { exports: {} }, exports: {}, console };
 vm.runInNewContext(
-  `${libSrc}\nmodule.exports = { editSowTasks, seedTaskEntries, cancelSubmittedPrtEdit };`,
+  `${libSrc}\nmodule.exports = { asPrtTaskList, editSowTasks, seedTaskEntries, visiblePrtEditEntries, showSubmittedPrtReadback, cancelSubmittedPrtEdit };`,
   sandbox
 );
-const { editSowTasks, seedTaskEntries, cancelSubmittedPrtEdit } = sandbox.module.exports;
+const {
+  asPrtTaskList,
+  editSowTasks,
+  seedTaskEntries,
+  visiblePrtEditEntries,
+  showSubmittedPrtReadback,
+  cancelSubmittedPrtEdit,
+} = sandbox.module.exports;
 
 let failed = 0;
 function check(name, fn) {
@@ -81,13 +89,51 @@ check('CANCEL exits edit with zero writes', () => {
   assert.strictEqual(JSON.stringify(next.writes), '[]');
 });
 
+check('Edit with empty todaySowTasks still shows submitted Task 1 (blank-body regression)', () => {
+  const entries = visiblePrtEditEntries([], [submittedTask1]);
+  assert.ok(entries.length > 0, 'Edit seeded zero tasks');
+  assert.strictEqual(entries[0].description, 'Task 1');
+  assert.strictEqual(entries[0].pct_today, 80);
+  assert.strictEqual(entries[0].notes, 'Taped the first run');
+  assert.ok(!entries.some((t) => t.description === 'Prep'));
+});
+
+check('Edit accepts submitted tasks as a JSON string (PowerSync text)', () => {
+  const raw = JSON.stringify([submittedTask1]);
+  assert.ok(!Array.isArray(raw));
+  const entries = visiblePrtEditEntries([], raw);
+  assert.ok(entries.length > 0, 'JSON string submitted PRT produced zero Edit tasks');
+  assert.strictEqual(entries[0].description, 'Task 1');
+  assert.strictEqual(entries[0].pct_today, 80);
+});
+
+check('Edit accepts already-parsed submitted task arrays', () => {
+  const entries = visiblePrtEditEntries([], [submittedTask1]);
+  assert.strictEqual(asPrtTaskList([submittedTask1]).length, 1);
+  assert.ok(entries.length > 0);
+});
+
+check('readback stays up if Edit would otherwise have zero cards', () => {
+  assert.strictEqual(showSubmittedPrtReadback(true, false, [submittedTask1]), true);
+  assert.strictEqual(showSubmittedPrtReadback(true, true, [submittedTask1]), false);
+  assert.strictEqual(showSubmittedPrtReadback(true, true, []), true);
+  assert.strictEqual(showSubmittedPrtReadback(false, false, []), false);
+});
+
 const tabSrc = fs.readFileSync(path.join(__dirname, '../src/screens/tabs/ReportTab.js'), 'utf8');
 
 check('ReportTab Edit uses today + submitted, not flattened allSowTasks', () => {
   assert.ok(!tabSrc.includes('allSowTasks'));
   assert.ok(tabSrc.includes('editSowTasks(todaySowTasks, submittedPrtTasks)'));
+  assert.ok(tabSrc.includes('visiblePrtEditEntries(todaySowTasks, existingReport?.tasks)'));
   assert.ok(tabSrc.includes('const sowSource = editing ? editSowSource : todaySowTasks'));
-  assert.ok(tabSrc.includes('seedTaskEntries(editSowSource, submittedPrtTasks, [])'));
+});
+
+check('ReportTab never opens a blank Edit body', () => {
+  assert.ok(tabSrc.includes('showSubmittedPrtReadback(prtSubmitted, editing, taskEntries)'));
+  assert.ok(tabSrc.includes('{showPrtReadback ? ('));
+  assert.ok(tabSrc.includes('if (entries.length === 0) return'));
+  assert.ok(tabSrc.includes('visiblePrtEditEntries(todaySowTasks, existingReport?.tasks)'));
 });
 
 check('ReportTab CANCEL is visible on edit and does not write', () => {

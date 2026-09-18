@@ -24,7 +24,14 @@ import { mergeDaysByDate } from './TasksTab';
 import { pickSowDaysForPrt, reportClockGate, reportClockCopy, punchLookbackDate, shiftDate } from '../../lib/dayDuty';
 import { jobNumber } from '../../lib/trips';
 import { requireCanonicalTeamMemberId, isMissingTeamMemberIdError } from '../../lib/activation';
-import { cancelSubmittedPrtEdit, editSowTasks, seedTaskEntries } from '../../lib/prtEdit';
+import {
+  asPrtTaskList,
+  cancelSubmittedPrtEdit,
+  editSowTasks,
+  seedTaskEntries,
+  showSubmittedPrtReadback,
+  visiblePrtEditEntries,
+} from '../../lib/prtEdit';
 
 const LOG_TYPES = [
   { key: 'SOD', label: 'START OF DAY', hint: 'Photos of job site at start' },
@@ -226,7 +233,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
   const existingReport = existingReports?.[0] || null;
   const prtSubmitted = existingReport?.status === 'submitted' || existingReport?.status === 'approved';
   const submittedPrtTasks = useMemo(
-    () => parseJSONArray(existingReport?.tasks, []),
+    () => asPrtTaskList(existingReport?.tasks),
     [existingReport?.tasks]
   );
   const editSowSource = useMemo(
@@ -240,17 +247,24 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
 
   const sowSource = editing ? editSowSource : todaySowTasks;
   const sowSourceKey = sowSource.map((t) => `${t.description}:${t.target_pct}`).join('|');
+  const showPrtReadback = showSubmittedPrtReadback(prtSubmitted, editing, taskEntries);
 
   useEffect(() => {
     if (prtSubmitted && !editing) return;
+    if (editing) {
+      const next = visiblePrtEditEntries(todaySowTasks, existingReport?.tasks);
+      if (next.length === 0) return;
+      setTaskEntries((prev) => (sameTaskEntries(prev, next) ? prev : next));
+      return;
+    }
     if (sowSource.length === 0) return;
-    const saved = parseJSONArray(existingReport?.tasks, []);
+    const saved = asPrtTaskList(existingReport?.tasks);
     setTaskEntries((prev) => {
       const next = seedTaskEntries(sowSource, saved, prev);
       if (sameTaskEntries(prev, next)) return prev;
       return next;
     });
-  }, [existingReport?.id, existingReport?.status, existingReport?.tasks, sowSourceKey, prtSubmitted, editing]);
+  }, [existingReport?.id, existingReport?.status, existingReport?.tasks, sowSourceKey, todaySowTasks, prtSubmitted, editing]);
 
   const updateTask = useCallback((idx, field, value) => {
     setTaskEntries((prev) => { const u = [...prev]; u[idx] = { ...u[idx], [field]: value }; return u; });
@@ -259,9 +273,11 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
   // Re-open a submitted PRT: today's SOW tasks plus any already-submitted
   // descriptions, prefilled. Other-day SOW tasks (e.g. Prep) stay off Edit.
   const startEdit = useCallback(() => {
-    setTaskEntries(seedTaskEntries(editSowSource, submittedPrtTasks, []));
+    const entries = visiblePrtEditEntries(todaySowTasks, existingReport?.tasks);
+    setTaskEntries(entries);
+    if (entries.length === 0) return;
     setEditing(true);
-  }, [editSowSource, submittedPrtTasks]);
+  }, [todaySowTasks, existingReport]);
 
   const cancelEdit = useCallback(() => {
     const next = cancelSubmittedPrtEdit();
@@ -580,7 +596,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
                 : 'Enter your daily % for each task. Hit the target or beat it.'}
             </Text>
 
-            {prtSubmitted && !editing ? (
+            {showPrtReadback ? (
               <View style={styles.submittedCard}>
                 <View style={styles.sentBadge}><Text style={styles.sentBadgeText}>✓ SENT TO OFFICE</Text></View>
                 <Text style={styles.submittedTitle}>PRT SUBMITTED</Text>
