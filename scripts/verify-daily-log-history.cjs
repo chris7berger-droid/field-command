@@ -17,10 +17,10 @@ const histSrc = fs.readFileSync(histPath, 'utf8')
 
 const sandbox = { module: { exports: {} }, exports: {}, console };
 vm.runInNewContext(
-  `${utilsSrc}\n${histSrc}\nmodule.exports = { dailyLogWorkDates, dailyLogEntriesOnDate, adjacentLogDate, createdOnLocalYmd, localYmd };`,
+  `${utilsSrc}\n${histSrc}\nmodule.exports = { dailyLogWorkDates, dailyLogEntriesOnDate, dailyLogEntriesForPeriod, adjacentLogDate, createdOnLocalYmd, localYmd };`,
   sandbox
 );
-const { dailyLogWorkDates, dailyLogEntriesOnDate, adjacentLogDate } = sandbox.module.exports;
+const { dailyLogWorkDates, dailyLogEntriesOnDate, dailyLogEntriesForPeriod, adjacentLogDate } = sandbox.module.exports;
 
 let failed = 0;
 function check(name, fn) {
@@ -80,6 +80,13 @@ check('future dates are excluded', () => {
   assert.strictEqual(JSON.stringify(dailyLogWorkDates([FUTURE, TODAY_EOD], TODAY)), JSON.stringify([TODAY]));
 });
 
+check('selected period hides other periods on the same date', () => {
+  const onY = dailyLogEntriesOnDate([YESTERDAY_SOD, TODAY_EOD, YESTERDAY_MOD], YESTERDAY);
+  assert.strictEqual(JSON.stringify(dailyLogEntriesForPeriod(onY, null).map((e) => e.id)), JSON.stringify(['sod-y', 'mod-y']));
+  assert.strictEqual(JSON.stringify(dailyLogEntriesForPeriod(onY, 'MOD').map((e) => e.id)), JSON.stringify(['mod-y']));
+  assert.strictEqual(JSON.stringify(dailyLogEntriesForPeriod(onY, 'EOD').map((e) => e.id)), JSON.stringify([]));
+});
+
 check('entries on a prior date keep type, notes, photos, and time stamp', () => {
   const onY = dailyLogEntriesOnDate([YESTERDAY_SOD, TODAY_EOD, YESTERDAY_MOD], YESTERDAY);
   assert.strictEqual(JSON.stringify(onY.map((e) => e.id)), JSON.stringify(['sod-y', 'mod-y']));
@@ -124,8 +131,13 @@ check('composer, start buttons, and sticky submit are today-only', () => {
   assert.ok(tabSrc.includes("Read only — previous work day"));
 });
 
+check('Daily Log content filters to the selected period', () => {
+  assert.ok(tabSrc.includes('dailyLogEntriesForPeriod(viewedLogEntries, selectedLogType)'));
+  assert.ok(tabSrc.includes('visibleLogEntries.map((entry)'));
+});
+
 check('historical cards stay read-only (type, time, notes, photos)', () => {
-  const histStart = tabSrc.indexOf('viewedLogEntries.map((entry)');
+  const histStart = tabSrc.indexOf('visibleLogEntries.map((entry)');
   const histEnd = tabSrc.indexOf('{/* New entry composer');
   assert.ok(histStart >= 0 && histEnd > histStart);
   const hist = tabSrc.slice(histStart, histEnd);

@@ -17,7 +17,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
 import { parseJSON, parseJSONArray, tod, fmtDayLabel } from '../../lib/utils';
-import { adjacentLogDate, dailyLogEntriesOnDate, dailyLogWorkDates } from '../../lib/dailyLogHistory';
+import { adjacentLogDate, dailyLogEntriesForPeriod, dailyLogEntriesOnDate, dailyLogWorkDates } from '../../lib/dailyLogHistory';
 import { uploadPhotos } from '../../lib/photos';
 import LinenBackground from '../../components/LinenBackground';
 import { mergeDaysByDate } from './TasksTab';
@@ -153,6 +153,14 @@ export function composerLogTypeAfterLoad(initialLogType, submittedTypes) {
   if (initialLogType !== 'SOD' && initialLogType !== 'MOD' && initialLogType !== 'EOD') return null;
   if (submittedTypes && submittedTypes.has(initialLogType)) return null;
   return initialLogType;
+}
+
+/** Viewing a period is independent of whether the composer opens. */
+export function initialSelectedLogType(initialLogType) {
+  if (initialLogType === 'SOD' || initialLogType === 'MOD' || initialLogType === 'EOD' || initialLogType === 'OTHER') {
+    return initialLogType;
+  }
+  return null;
 }
 
 export default function ReportTab({ jobId, employeeId, jobName, navigation, initialSection, initialLogType }) {
@@ -317,17 +325,43 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
   }, [viewedLogEntries]);
 
   const appliedInitialLogType = useRef(false);
+  const [selectedLogType, setSelectedLogType] = useState(null);
   const [logType, setLogType] = useState(null);
   const [logPhotos, setLogPhotos] = useState([]);
   const [logNotes, setLogNotes] = useState('');
   const [logSubmitting, setLogSubmitting] = useState(false);
 
+  const visibleLogEntries = useMemo(
+    () => dailyLogEntriesForPeriod(viewedLogEntries, selectedLogType),
+    [viewedLogEntries, selectedLogType]
+  );
+
   useEffect(() => {
     if (logLoading) return;
     if (appliedInitialLogType.current) return;
     appliedInitialLogType.current = true;
+    setSelectedLogType(initialSelectedLogType(initialLogType));
     setLogType(composerLogTypeAfterLoad(initialLogType, submittedTypes));
   }, [logLoading, initialLogType, submittedTypes]);
+
+  const clearComposer = useCallback(() => {
+    setLogType(null);
+    setLogPhotos([]);
+    setLogNotes('');
+  }, []);
+
+  const openLogPeriod = useCallback((type, { compose = false } = {}) => {
+    setSelectedLogType(type);
+    if (compose && viewingToday) {
+      if (logType !== type) {
+        setLogPhotos([]);
+        setLogNotes('');
+      }
+      setLogType(type);
+      return;
+    }
+    clearComposer();
+  }, [viewingToday, logType, clearComposer]);
 
   const getActorId = useCallback(() => {
     try {
@@ -661,7 +695,12 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
             <View style={styles.logDateNav}>
               <TouchableOpacity
                 style={[styles.logDateNavBtn, !prevWorkDate && styles.logDateNavBtnDisabled]}
-                onPress={() => prevWorkDate && setViewDate(prevWorkDate)}
+                onPress={() => {
+                  if (!prevWorkDate) return;
+                  setViewDate(prevWorkDate);
+                  setSelectedLogType(null);
+                  clearComposer();
+                }}
                 disabled={!prevWorkDate}
                 accessibilityLabel="Previous work date"
               >
@@ -672,7 +711,12 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
               </Text>
               <TouchableOpacity
                 style={[styles.logDateNavBtn, !nextWorkDate && styles.logDateNavBtnDisabled]}
-                onPress={() => nextWorkDate && setViewDate(nextWorkDate)}
+                onPress={() => {
+                  if (!nextWorkDate) return;
+                  setViewDate(nextWorkDate);
+                  setSelectedLogType(null);
+                  clearComposer();
+                }}
                 disabled={!nextWorkDate}
                 accessibilityLabel="Next work date"
               >
@@ -689,19 +733,29 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
             <View style={styles.logStatusRow}>
               {LOG_TYPES.map((lt) => {
                 const done = viewedSubmittedTypes.has(lt.key);
+                const selected = selectedLogType === lt.key;
                 return (
-                  <View key={lt.key} style={[styles.logStatusPill, done && styles.logStatusDone]}>
-                    <Text style={[styles.logStatusText, done && styles.logStatusTextDone]}>{lt.key}</Text>
+                  <TouchableOpacity
+                    key={lt.key}
+                    style={[styles.logStatusPill, done && styles.logStatusDone, selected && styles.logStatusSelected]}
+                    onPress={() => openLogPeriod(lt.key, {
+                      compose: viewingToday && !viewedSubmittedTypes.has(lt.key),
+                    })}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    accessibilityLabel={`${lt.label}${done ? ', completed' : ''}`}
+                  >
+                    <Text style={[styles.logStatusText, (done || selected) && styles.logStatusTextDone]}>{lt.key}</Text>
                     <Text style={styles.logStatusCheck}>{done ? '\u2713' : '\u25CB'}</Text>
-                  </View>
+                  </TouchableOpacity>
                 );
               })}
             </View>
 
-            {/* Submitted entries */}
-            {viewedLogEntries.length > 0 && (
+            {/* Submitted entries for the selected period only */}
+            {visibleLogEntries.length > 0 && (
               <View style={styles.logHistory}>
-                {viewedLogEntries.map((entry) => {
+                {visibleLogEntries.map((entry) => {
                   const photos = parseJSON(entry.photos, []);
                   return (
                     <View key={entry.id} style={styles.logEntryCard}>
@@ -728,7 +782,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
               <View style={styles.composerCard}>
                 <View style={styles.composerHeader}>
                   <View style={styles.logTypeBadge}><Text style={styles.logTypeText}>{logType}</Text></View>
-                  <TouchableOpacity onPress={() => { setLogType(null); setLogPhotos([]); setLogNotes(''); }}>
+                  <TouchableOpacity onPress={() => { setSelectedLogType(null); clearComposer(); }}>
                     <Text style={styles.composerCancel}>CANCEL</Text>
                   </TouchableOpacity>
                 </View>
@@ -771,12 +825,12 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
             ) : viewingToday ? (
               <View style={styles.logButtons}>
                 {LOG_TYPES.map((lt) => (
-                  <TouchableOpacity key={lt.key} style={[styles.logStartBtn, submittedTypes.has(lt.key) && styles.logStartBtnDone]} onPress={() => setLogType(lt.key)}>
+                  <TouchableOpacity key={lt.key} style={[styles.logStartBtn, submittedTypes.has(lt.key) && styles.logStartBtnDone]} onPress={() => openLogPeriod(lt.key, { compose: true })}>
                     <Text style={styles.logStartBtnLabel}>{lt.label}</Text>
                     <Text style={styles.logStartBtnHint}>{submittedTypes.has(lt.key) ? 'Add another' : lt.hint}</Text>
                   </TouchableOpacity>
                 ))}
-                <TouchableOpacity style={styles.logStartBtn} onPress={() => setLogType('OTHER')}>
+                <TouchableOpacity style={styles.logStartBtn} onPress={() => openLogPeriod('OTHER', { compose: true })}>
                   <Text style={styles.logStartBtnLabel}>+ ADD ENTRY</Text>
                   <Text style={styles.logStartBtnHint}>Extra photos and notes anytime</Text>
                 </TouchableOpacity>
@@ -903,6 +957,7 @@ const styles = StyleSheet.create({
   logStatusRow: { flexDirection: 'row', gap: S.sm, marginBottom: S.md },
   logStatusPill: { flex: 1, backgroundColor: C.linenCard, borderRadius: 8, paddingVertical: 8, alignItems: 'center', borderWidth: 1, borderColor: C.borderStrong, flexDirection: 'row', justifyContent: 'center', gap: 6 },
   logStatusDone: { backgroundColor: C.dark, borderColor: C.teal },
+  logStatusSelected: { borderColor: C.teal, borderWidth: 2 },
   logStatusText: { fontFamily: F.display, fontSize: 12, color: C.textMuted, letterSpacing: 1 },
   logStatusTextDone: { color: C.teal },
   logStatusCheck: { fontFamily: F.body, fontSize: 14, color: C.teal },

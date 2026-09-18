@@ -12,10 +12,10 @@ const tabSrc = fs.readFileSync(tabPath, 'utf8');
 const start = tabSrc.indexOf('export function composerLogTypeAfterLoad');
 const end = tabSrc.indexOf('export default function ReportTab');
 assert.ok(start >= 0 && end > start, 'composerLogTypeAfterLoad must exist');
-const fnSrc = tabSrc.slice(start, end).replace(/^export /m, '');
+const fnSrc = tabSrc.slice(start, end).replace(/^export /gm, '');
 const sandbox = { module: { exports: {} }, exports: {} };
-vm.runInNewContext(`${fnSrc}\nmodule.exports = { composerLogTypeAfterLoad };`, sandbox);
-const { composerLogTypeAfterLoad } = sandbox.module.exports;
+vm.runInNewContext(`${fnSrc}\nmodule.exports = { composerLogTypeAfterLoad, initialSelectedLogType };`, sandbox);
+const { composerLogTypeAfterLoad, initialSelectedLogType } = sandbox.module.exports;
 
 let failed = 0;
 function check(name, fn) {
@@ -41,6 +41,14 @@ check('first SOD/MOD/EOD still auto-opens when that type is not in today', () =>
   assert.strictEqual(composerLogTypeAfterLoad('EOD', new Set(['SOD', 'MOD'])), 'EOD');
 });
 
+check('duty navigation still selects that period even when composer stays closed', () => {
+  assert.strictEqual(initialSelectedLogType('SOD'), 'SOD');
+  assert.strictEqual(initialSelectedLogType('MOD'), 'MOD');
+  assert.strictEqual(initialSelectedLogType('EOD'), 'EOD');
+  assert.strictEqual(initialSelectedLogType('OTHER'), 'OTHER');
+  assert.strictEqual(initialSelectedLogType(undefined), null);
+});
+
 check('OTHER and invalid initials are unchanged', () => {
   assert.strictEqual(composerLogTypeAfterLoad('OTHER', new Set(['SOD'])), 'OTHER');
   assert.strictEqual(composerLogTypeAfterLoad(undefined, new Set()), null);
@@ -51,7 +59,7 @@ check('ReportTab applies the helper after logs load, once', () => {
   assert.ok(tabSrc.includes('appliedInitialLogType'));
   assert.ok(tabSrc.includes('if (logLoading) return'));
   assert.ok(tabSrc.includes('composerLogTypeAfterLoad(initialLogType, submittedTypes)'));
-  assert.ok(tabSrc.includes("onPress={() => setLogType(lt.key)}"));
+  assert.ok(tabSrc.includes('openLogPeriod(lt.key, { compose: true })'));
   assert.ok(tabSrc.includes("submittedTypes.has(lt.key) ? 'Add another'"));
 });
 

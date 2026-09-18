@@ -18,6 +18,13 @@ export function dailyLogEntriesOnDate(entries, ymd) {
   return (entries || []).filter((e) => createdOnLocalYmd(e.created_at, ymd));
 }
 
+/** When a SOD/MOD/EOD/OTHER period is selected, hide other periods' cards. */
+export function dailyLogEntriesForPeriod(entries, period) {
+  const list = entries || [];
+  if (!period) return list;
+  return list.filter((e) => e.entry_type === period);
+}
+
 export function adjacentLogDate(dates, viewDate, dir) {
   if (!dates?.length || !viewDate || !dir) return null;
   if (dir < 0) {
