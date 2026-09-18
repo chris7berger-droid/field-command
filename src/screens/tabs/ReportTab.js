@@ -8,7 +8,7 @@
  *            Each entry = photos + required note, submitted individually.
  *            Photos upload to Cloudflare R2 via upload-photo edge function.
  */
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, ScrollView, TextInput, TouchableOpacity, Image,
   Alert, StyleSheet, Vibration, KeyboardAvoidingView, Platform,
@@ -144,6 +144,14 @@ function prtRung(pctToday, targetPct) {
   if (ratio >= 40) return PRT_RUNGS.delay;
   if (ratio >= 20) return PRT_RUNGS.risk;
   return PRT_RUNGS.nearZero;
+}
+
+/** Home duty navigation may pass SOD/MOD/EOD even when that type is already in. */
+export function composerLogTypeAfterLoad(initialLogType, submittedTypes) {
+  if (initialLogType === 'OTHER') return 'OTHER';
+  if (initialLogType !== 'SOD' && initialLogType !== 'MOD' && initialLogType !== 'EOD') return null;
+  if (submittedTypes && submittedTypes.has(initialLogType)) return null;
+  return initialLogType;
 }
 
 export default function ReportTab({ jobId, employeeId, jobName, navigation, initialSection, initialLogType }) {
@@ -286,14 +294,18 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
     return new Set(todaysLogEntries.map((e) => e.entry_type));
   }, [todaysLogEntries]);
 
-  const [logType, setLogType] = useState(
-    initialLogType === 'SOD' || initialLogType === 'MOD' || initialLogType === 'EOD' || initialLogType === 'OTHER'
-      ? initialLogType
-      : null
-  );
+  const appliedInitialLogType = useRef(false);
+  const [logType, setLogType] = useState(null);
   const [logPhotos, setLogPhotos] = useState([]);
   const [logNotes, setLogNotes] = useState('');
   const [logSubmitting, setLogSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (logLoading) return;
+    if (appliedInitialLogType.current) return;
+    appliedInitialLogType.current = true;
+    setLogType(composerLogTypeAfterLoad(initialLogType, submittedTypes));
+  }, [logLoading, initialLogType, submittedTypes]);
 
   const getActorId = useCallback(() => {
     try {
