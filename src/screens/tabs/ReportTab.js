@@ -24,6 +24,7 @@ import { mergeDaysByDate } from './TasksTab';
 import { pickSowDaysForPrt, reportClockGate, reportClockCopy, punchLookbackDate, shiftDate } from '../../lib/dayDuty';
 import { jobNumber } from '../../lib/trips';
 import { requireCanonicalTeamMemberId, isMissingTeamMemberIdError } from '../../lib/activation';
+import { cancelSubmittedPrtEdit, editSowTasks, seedTaskEntries } from '../../lib/prtEdit';
 
 const LOG_TYPES = [
   { key: 'SOD', label: 'START OF DAY', hint: 'Photos of job site at start' },
@@ -47,29 +48,6 @@ function tasksFromDays(dayList) {
     }
   }
   return tasks;
-}
-
-function uniqueTasksByDescription(tasks) {
-  const out = [];
-  for (const t of tasks) {
-    if (!out.find((ex) => ex.description === t.description)) out.push(t);
-  }
-  return out;
-}
-
-function seedTaskEntries(source, saved, local) {
-  const byDesc = new Map();
-  for (const t of (saved || [])) byDesc.set(t.description, t);
-  for (const t of (local || [])) byDesc.set(t.description, t);
-  return source.map((t) => {
-    const prev = byDesc.get(t.description);
-    return {
-      description: t.description,
-      target_pct: t.target_pct,
-      pct_today: prev ? Number(prev.pct_today) || 0 : 0,
-      notes: prev ? (prev.notes || '') : '',
-    };
-  });
 }
 
 function sameTaskEntries(a, b) {
@@ -235,11 +213,6 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
   );
 
   const todaySowTasks = useMemo(() => tasksFromDays(prtDays), [prtDays]);
-  const allSowTasks = useMemo(() => {
-    const used = new Set(prtDays.map((d) => d.key));
-    const rest = days.filter((d) => !used.has(d.key));
-    return uniqueTasksByDescription([...todaySowTasks, ...tasksFromDays(rest)]);
-  }, [days, prtDays, todaySowTasks]);
   const prtDayLabel = prtDays.map((d) => d.label).filter(Boolean).join(' · ');
   // Postgres wtc_id is a UUID (FK to proposal_wtc). Empty string is rejected
   // and PowerSync discards the write — which is why PRT looked like it wouldn't save.
@@ -252,12 +225,20 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
   );
   const existingReport = existingReports?.[0] || null;
   const prtSubmitted = existingReport?.status === 'submitted' || existingReport?.status === 'approved';
+  const submittedPrtTasks = useMemo(
+    () => parseJSONArray(existingReport?.tasks, []),
+    [existingReport?.tasks]
+  );
+  const editSowSource = useMemo(
+    () => editSowTasks(todaySowTasks, submittedPrtTasks),
+    [todaySowTasks, submittedPrtTasks]
+  );
 
   const [taskEntries, setTaskEntries] = useState([]);
   const [prtSubmitting, setPrtSubmitting] = useState(false);
   const [editing, setEditing] = useState(false); // re-open a submitted PRT to edit + resubmit
 
-  const sowSource = editing ? allSowTasks : todaySowTasks;
+  const sowSource = editing ? editSowSource : todaySowTasks;
   const sowSourceKey = sowSource.map((t) => `${t.description}:${t.target_pct}`).join('|');
 
   useEffect(() => {
@@ -275,14 +256,17 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
     setTaskEntries((prev) => { const u = [...prev]; u[idx] = { ...u[idx], [field]: value }; return u; });
   }, []);
 
-  // Re-open a submitted PRT for editing: show the full (flat) task list with the
-  // previously reported values prefilled, so they can correct today's numbers or
-  // add ahead-of-schedule work before resubmitting. Targets still come from SOW.
+  // Re-open a submitted PRT: today's SOW tasks plus any already-submitted
+  // descriptions, prefilled. Other-day SOW tasks (e.g. Prep) stay off Edit.
   const startEdit = useCallback(() => {
-    const submitted = parseJSONArray(existingReport?.tasks, []);
-    setTaskEntries(seedTaskEntries(allSowTasks, submitted, []));
+    setTaskEntries(seedTaskEntries(editSowSource, submittedPrtTasks, []));
     setEditing(true);
-  }, [existingReport, allSowTasks]);
+  }, [editSowSource, submittedPrtTasks]);
+
+  const cancelEdit = useCallback(() => {
+    const next = cancelSubmittedPrtEdit();
+    setEditing(next.editing);
+  }, []);
 
   // ── Daily Log State ─────────────────────────────────────
   // Load this job's logs (not today-only) so prior work dates can be viewed.
@@ -845,6 +829,16 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
           in the form, not only after scrolling to the bottom. */}
       {section === 'prt' && (!prtSubmitted || editing) && taskEntries.length > 0 && (
         <View style={styles.stickyBar}>
+          {editing ? (
+            <TouchableOpacity
+              style={styles.cancelBtn}
+              onPress={cancelEdit}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel PRT edit"
+            >
+              <Text style={styles.cancelBtnText}>CANCEL</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity style={styles.draftBtn} onPress={savePRTDraft}>
             <Text style={styles.draftBtnText}>SAVE DRAFT</Text>
           </TouchableOpacity>
@@ -926,6 +920,8 @@ const styles = StyleSheet.create({
   editBtnText: { fontFamily: F.display, fontSize: 14, color: C.teal, letterSpacing: 1 },
   sentBadge: { alignSelf: 'center', backgroundColor: C.dark, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6, marginBottom: S.sm },
   sentBadgeText: { fontFamily: F.display, fontSize: 12, color: C.teal, letterSpacing: 1.5 },
+  cancelBtn: { flex: 1, backgroundColor: C.linenDeep, borderRadius: 10, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: C.borderStrong },
+  cancelBtnText: { fontFamily: F.display, fontSize: 14, color: C.textMuted, letterSpacing: 1 },
   draftBtn: { flex: 1, backgroundColor: C.linenDeep, borderRadius: 10, paddingVertical: 16, alignItems: 'center' },
   draftBtnText: { fontFamily: F.display, fontSize: 14, color: C.textBody, letterSpacing: 1 },
   submitBtn: { flex: 2, backgroundColor: C.dark, borderRadius: 10, paddingVertical: 16, alignItems: 'center' },
