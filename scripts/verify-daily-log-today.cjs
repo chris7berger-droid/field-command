@@ -53,8 +53,8 @@ const tabSrc = fs.readFileSync(tabPath, 'utf8');
 
 check('Daily Log query is not an ISO midnight toISOString bound', () => {
   assert.ok(!tabSrc.includes("new Date(today + 'T00:00:00').toISOString()"));
-  assert.ok(tabSrc.includes('[jobId, today]'));
-  assert.ok(tabSrc.includes('createdOnLocalYmd(e.created_at, today)'));
+  assert.ok(tabSrc.includes('dailyLogEntriesOnDate(logEntries, today)'));
+  assert.ok(tabSrc.includes('todaysLogEntries.map((e) => e.entry_type)'));
 });
 
 check('Daily Log pills and history use today-filtered entries', () => {

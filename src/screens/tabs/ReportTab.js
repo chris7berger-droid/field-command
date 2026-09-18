@@ -16,7 +16,8 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
-import { parseJSON, parseJSONArray, tod, createdOnLocalYmd } from '../../lib/utils';
+import { parseJSON, parseJSONArray, tod, fmtDayLabel } from '../../lib/utils';
+import { adjacentLogDate, dailyLogEntriesOnDate, dailyLogWorkDates } from '../../lib/dailyLogHistory';
 import { uploadPhotos } from '../../lib/photos';
 import LinenBackground from '../../components/LinenBackground';
 import { mergeDaysByDate } from './TasksTab';
@@ -276,23 +277,44 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
   }, [existingReport, allSowTasks]);
 
   // ── Daily Log State ─────────────────────────────────────
-  // Bound with local YYYY-MM-DD, not toISOString(). PowerSync stores
-  // created_at like `2026-09-17 21:44:43.961+00` (space). That string is
-  // lexicographically < `2026-09-17T07:00:00.000Z`, so an ISO midnight
-  // cutoff dropped today's SOD while Home still counted it via localYmd.
+  // Load this job's logs (not today-only) so prior work dates can be viewed.
+  // Today vs history is still split with localYmd(created_at), not an ISO
+  // midnight SQL cutoff — PowerSync stores created_at like
+  // `2026-09-17 21:44:43.961+00` (space), which is lexicographically <
+  // `2026-09-17T07:00:00.000Z`.
   const { data: logEntries, isLoading: logLoading } = useQuery(
-    `SELECT * FROM daily_log_entries WHERE job_id = ? AND created_at >= ? ORDER BY created_at ASC`,
-    [jobId, today]
+    `SELECT * FROM daily_log_entries WHERE job_id = ? ORDER BY created_at ASC`,
+    [jobId]
   );
 
+  const [viewDate, setViewDate] = useState(today);
+  const viewingToday = viewDate === today;
+
+  useEffect(() => {
+    setViewDate(today);
+  }, [jobId, today]);
+
   const todaysLogEntries = useMemo(
-    () => (logEntries || []).filter((e) => createdOnLocalYmd(e.created_at, today)),
+    () => dailyLogEntriesOnDate(logEntries, today),
     [logEntries, today]
   );
+  const viewedLogEntries = useMemo(
+    () => dailyLogEntriesOnDate(logEntries, viewDate),
+    [logEntries, viewDate]
+  );
+  const workDates = useMemo(
+    () => dailyLogWorkDates(logEntries, today),
+    [logEntries, today]
+  );
+  const prevWorkDate = adjacentLogDate(workDates, viewDate, -1);
+  const nextWorkDate = adjacentLogDate(workDates, viewDate, 1);
 
   const submittedTypes = useMemo(() => {
     return new Set(todaysLogEntries.map((e) => e.entry_type));
   }, [todaysLogEntries]);
+  const viewedSubmittedTypes = useMemo(() => {
+    return new Set(viewedLogEntries.map((e) => e.entry_type));
+  }, [viewedLogEntries]);
 
   const appliedInitialLogType = useRef(false);
   const [logType, setLogType] = useState(null);
@@ -425,6 +447,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
 
   // ── Daily Log Submit (optimistic — save immediately, upload photos in background) ──
   const submitLogEntry = useCallback(async () => {
+    if (viewDate !== today) return;
     if (!logNotes.trim()) { Alert.alert('Note required', 'Add a note before submitting.'); return; }
     if (logPhotos.length === 0) { Alert.alert('Photos required', 'Add at least one photo.'); return; }
 
@@ -477,7 +500,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
     } finally {
       setLogSubmitting(false);
     }
-  }, [logType, logPhotos, logNotes, jobId, db, getActorId]);
+  }, [viewDate, today, logType, logPhotos, logNotes, jobId, db, getActorId]);
 
   // ── Render ──────────────────────────────────────────────
   if (Array.isArray(punchRows) && !reportGate.allowed) {
@@ -635,12 +658,37 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
         {section === 'log' && (
           <>
             <Text style={styles.sectionTitle}>DAILY LOG</Text>
-            <Text style={styles.sectionHint}>Photo + note entries throughout the day. SOD, MOD, EOD required.</Text>
+            <View style={styles.logDateNav}>
+              <TouchableOpacity
+                style={[styles.logDateNavBtn, !prevWorkDate && styles.logDateNavBtnDisabled]}
+                onPress={() => prevWorkDate && setViewDate(prevWorkDate)}
+                disabled={!prevWorkDate}
+                accessibilityLabel="Previous work date"
+              >
+                <Text style={styles.logDateNavArrow}>{'\u2039'}</Text>
+              </TouchableOpacity>
+              <Text style={styles.logDateNavLabel}>
+                {viewingToday ? 'TODAY' : (fmtDayLabel(viewDate) || viewDate)}
+              </Text>
+              <TouchableOpacity
+                style={[styles.logDateNavBtn, !nextWorkDate && styles.logDateNavBtnDisabled]}
+                onPress={() => nextWorkDate && setViewDate(nextWorkDate)}
+                disabled={!nextWorkDate}
+                accessibilityLabel="Next work date"
+              >
+                <Text style={styles.logDateNavArrow}>{'\u203A'}</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.sectionHint}>
+              {viewingToday
+                ? 'Photo + note entries throughout the day. SOD, MOD, EOD required.'
+                : 'Read only — previous work day. Return to TODAY to add a log.'}
+            </Text>
 
             {/* Status pills */}
             <View style={styles.logStatusRow}>
               {LOG_TYPES.map((lt) => {
-                const done = submittedTypes.has(lt.key);
+                const done = viewedSubmittedTypes.has(lt.key);
                 return (
                   <View key={lt.key} style={[styles.logStatusPill, done && styles.logStatusDone]}>
                     <Text style={[styles.logStatusText, done && styles.logStatusTextDone]}>{lt.key}</Text>
@@ -651,9 +699,9 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
             </View>
 
             {/* Submitted entries */}
-            {todaysLogEntries.length > 0 && (
+            {viewedLogEntries.length > 0 && (
               <View style={styles.logHistory}>
-                {todaysLogEntries.map((entry) => {
+                {viewedLogEntries.map((entry) => {
                   const photos = parseJSON(entry.photos, []);
                   return (
                     <View key={entry.id} style={styles.logEntryCard}>
@@ -675,8 +723,8 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
               </View>
             )}
 
-            {/* New entry composer */}
-            {logType ? (
+            {/* New entry composer — today only */}
+            {viewingToday && logType ? (
               <View style={styles.composerCard}>
                 <View style={styles.composerHeader}>
                   <View style={styles.logTypeBadge}><Text style={styles.logTypeText}>{logType}</Text></View>
@@ -720,7 +768,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
                   textAlignVertical="top"
                 />
               </View>
-            ) : (
+            ) : viewingToday ? (
               <View style={styles.logButtons}>
                 {LOG_TYPES.map((lt) => (
                   <TouchableOpacity key={lt.key} style={[styles.logStartBtn, submittedTypes.has(lt.key) && styles.logStartBtnDone]} onPress={() => setLogType(lt.key)}>
@@ -733,7 +781,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
                   <Text style={styles.logStartBtnHint}>Extra photos and notes anytime</Text>
                 </TouchableOpacity>
               </View>
-            )}
+            ) : null}
           </>
         )}
 
@@ -752,7 +800,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
         </View>
       )}
 
-      {section === 'log' && logType && (
+      {section === 'log' && viewingToday && logType && (
         <View style={styles.stickyBar}>
           <TouchableOpacity style={[styles.submitBtn, logSubmitting && { opacity: 0.5 }]} onPress={submitLogEntry} disabled={logSubmitting}>
             <Text style={styles.submitBtnText}>{logSubmitting ? 'SAVING...' : `SUBMIT ${logType}`}</Text>
@@ -842,6 +890,16 @@ const styles = StyleSheet.create({
   submittedNotes: { fontFamily: F.body, fontSize: 13, color: C.textMuted, fontStyle: 'italic' },
 
   // Daily Log
+  logDateNav: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: C.linenCard, borderRadius: 10, borderWidth: 1, borderColor: C.borderStrong,
+    paddingVertical: 4, paddingHorizontal: 6, marginBottom: S.sm,
+  },
+  logDateNavBtn: { width: 44, height: 40, alignItems: 'center', justifyContent: 'center' },
+  logDateNavBtnDisabled: { opacity: 0.35 },
+  logDateNavArrow: { fontFamily: F.display, fontSize: 28, color: C.textHead, lineHeight: 32 },
+  logDateNavLabel: { fontFamily: F.display, fontSize: 16, color: C.textHead, letterSpacing: 1.5, flex: 1, textAlign: 'center' },
+
   logStatusRow: { flexDirection: 'row', gap: S.sm, marginBottom: S.md },
   logStatusPill: { flex: 1, backgroundColor: C.linenCard, borderRadius: 8, paddingVertical: 8, alignItems: 'center', borderWidth: 1, borderColor: C.borderStrong, flexDirection: 'row', justifyContent: 'center', gap: 6 },
   logStatusDone: { backgroundColor: C.dark, borderColor: C.teal },
