@@ -1,6 +1,6 @@
 /**
  * Submitted-PRT edit: today's SOW tasks plus already-submitted descriptions.
- * Cancel is a local state flip — no draft, status, or submit write.
+ * Cancel is a local state flip — no writes. There is no PRT draft path.
  *
  * The PRT body is a view-model, not "editing XOR readback". Hide the
  * submitted card only when the editor actually has cards to show. A live

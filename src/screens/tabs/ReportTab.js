@@ -489,37 +489,6 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
     }
   }, [taskEntries, existingReport, jobId, workDate, db, sowWtcId, getActorId]);
 
-  const savePRTDraft = useCallback(async () => {
-    const data = {
-      tasks: JSON.stringify(taskEntries),
-      materials_used: '[]',
-      hours_regular: 0, hours_ot: 0,
-      photos: '[]',
-      notes: 'PRT draft',
-      status: 'draft',
-    };
-
-    try {
-      const actorId = getActorId();
-      if (!actorId) return;
-      if (existingReport) {
-        await db.execute(
-          `UPDATE daily_production_reports SET tasks=?, status=?, synced=0 WHERE id=?`,
-          [data.tasks, data.status, existingReport.id]
-        );
-      } else {
-        const id = generateId();
-        await db.execute(
-          `INSERT INTO daily_production_reports (id,job_id,wtc_id,report_date,submitted_by,tasks,materials_used,hours_regular,hours_ot,photos,notes,status,synced,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?)`,
-          [id, jobId, sowWtcId, workDate, actorId, data.tasks, data.materials_used, data.hours_regular, data.hours_ot, data.photos, data.notes, data.status, new Date().toISOString()]
-        );
-      }
-      Vibration.vibrate(50);
-    } catch (e) {
-      Alert.alert('Not saved', `Could not save the PRT draft: ${e?.message || 'unknown error'}.`);
-    }
-  }, [taskEntries, existingReport, jobId, workDate, db, sowWtcId, getActorId]);
-
   // ── Daily Log Submit (optimistic — save immediately, upload photos in background) ──
   const submitLogEntry = useCallback(async () => {
     if (viewDate !== today) return;
@@ -882,7 +851,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
 
       </ScrollView>
 
-      {/* Sticky action bar — always visible so the crew can save from anywhere
+      {/* Sticky action bar — always visible so the crew can submit from anywhere
           in the form, not only after scrolling to the bottom. */}
       {section === 'prt' && prtView.showSticky && (
         <View style={styles.stickyBar}>
@@ -896,11 +865,10 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
               <Text style={styles.cancelBtnText}>CANCEL</Text>
             </TouchableOpacity>
           ) : null}
-          <TouchableOpacity style={styles.draftBtn} onPress={savePRTDraft}>
-            <Text style={styles.draftBtnText}>SAVE DRAFT</Text>
-          </TouchableOpacity>
           <TouchableOpacity style={[styles.submitBtn, prtSubmitting && { opacity: 0.5 }]} onPress={submitPRT} disabled={prtSubmitting}>
-            <Text style={styles.submitBtnText}>{prtSubmitting ? 'SUBMITTING...' : 'SUBMIT PRT'}</Text>
+            <Text style={styles.submitBtnText}>
+              {prtSubmitting ? (editing ? 'RESUBMITTING...' : 'SUBMITTING...') : (editing ? 'RESUBMIT PRT' : 'SUBMIT PRT')}
+            </Text>
           </TouchableOpacity>
         </View>
       )}
@@ -979,8 +947,6 @@ const styles = StyleSheet.create({
   sentBadgeText: { fontFamily: F.display, fontSize: 12, color: C.teal, letterSpacing: 1.5 },
   cancelBtn: { flex: 1, backgroundColor: C.linenDeep, borderRadius: 10, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: C.borderStrong },
   cancelBtnText: { fontFamily: F.display, fontSize: 14, color: C.textMuted, letterSpacing: 1 },
-  draftBtn: { flex: 1, backgroundColor: C.linenDeep, borderRadius: 10, paddingVertical: 16, alignItems: 'center' },
-  draftBtnText: { fontFamily: F.display, fontSize: 14, color: C.textBody, letterSpacing: 1 },
   submitBtn: { flex: 2, backgroundColor: C.dark, borderRadius: 10, paddingVertical: 16, alignItems: 'center' },
   submitBtnText: { fontFamily: F.display, fontSize: 14, color: C.teal, letterSpacing: 1 },
 

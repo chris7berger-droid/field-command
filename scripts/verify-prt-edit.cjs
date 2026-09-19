@@ -171,6 +171,16 @@ check('ReportTab CANCEL is visible on edit and does not write', () => {
   assert.ok(!cancelFn.includes('submitPRT'));
 });
 
+check('PRT has no Save Draft path', () => {
+  assert.ok(!tabSrc.includes('SAVE DRAFT'));
+  assert.ok(!tabSrc.includes('savePRTDraft'));
+  assert.ok(!tabSrc.includes("status: 'draft'"));
+  assert.ok(!tabSrc.includes('PRT draft'));
+  assert.ok(tabSrc.includes("'SUBMIT PRT'"));
+  assert.ok(tabSrc.includes("'RESUBMIT PRT'"));
+  assert.ok(tabSrc.includes("status: 'submitted'"));
+});
+
 check('first submit and worked-only persist', () => {
   assert.ok(tabSrc.includes('const worked = taskEntries.filter(t => Number(t.pct_today) > 0)'));
   assert.ok(tabSrc.includes('JSON.stringify(worked)'));
