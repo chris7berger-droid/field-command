@@ -762,7 +762,7 @@ export default function ReportTab({ jobId, employeeId, employeeName, jobName, na
               </>
             )}
           </>
-        )}
+        ) : null}
 
         {/* ═══ Daily Log Section ═══ */}
         {section === 'log' && logBlocked ? (
@@ -932,7 +932,7 @@ export default function ReportTab({ jobId, employeeId, employeeName, jobName, na
               </View>
             ) : null}
           </>
-        )}
+        ) : null}
 
       </ScrollView>
 
