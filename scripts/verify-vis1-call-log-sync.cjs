@@ -39,6 +39,7 @@ check('parked_scheduled_call_log uses supported parameter-bucket shape', () => {
   assert.ok(src.includes('FROM jobs'));
   assert.ok(src.includes("status = 'Parked'"));
   assert.ok(src.includes("status = 'Scheduled'"));
+  assert.ok(src.includes("status = 'Ongoing'"));
   assert.ok(src.includes("deleted = 'No'"));
   assert.ok(src.includes('SELECT * FROM call_log WHERE id = bucket.call_log_id'));
   assert.ok(!src.includes('IN (SELECT'));
@@ -55,9 +56,10 @@ check('no publication change and no per-user filter', () => {
   assert.ok(!src.includes('request.user_id'));
 });
 
-check('does not sync all Sold / all live-job call_log parents', () => {
+check('includes Ongoing parents and excludes Complete / Sold-only', () => {
   const params = src.slice(src.indexOf('parked_scheduled_call_log:'));
-  assert.ok(!params.includes('Ongoing'));
+  assert.ok(params.includes("status = 'Ongoing'"));
+  assert.ok(!params.includes("status = 'Complete'"));
   assert.ok(!params.includes("status = 'Sold'"));
 });
 
