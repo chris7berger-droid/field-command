@@ -8,9 +8,9 @@
 # VIS-1: Legacy Sync Rules cannot JOIN/subquery in a data query
 # (docs.powersync.com/sync/supported-sql — Sync Rules: "Not supported:
 # subqueries, JOINs, CTEs"). Schedule-driven call_log rows use a second
-# global bucket whose parameter query reads live Parked/Scheduled jobs.
-# Assignment-window sync is not in this slice: #10176 is Parked, so the
-# status rule is sufficient and does not pull historical Sold/Ongoing.
+# global bucket whose parameter query reads live Parked/Scheduled/Ongoing
+# jobs. Complete-only jobs stay out (Go Back is a later slice). Do not
+# pull the Sales-only historical book.
 
 bucket_definitions:
   all_data:
@@ -39,7 +39,7 @@ bucket_definitions:
       SELECT call_log_id
         FROM jobs
        WHERE (deleted IS NULL OR deleted = 'No')
-         AND (status = 'Parked' OR status = 'Scheduled')
+         AND (status = 'Parked' OR status = 'Scheduled' OR status = 'Ongoing')
          AND call_log_id IS NOT NULL
     data:
       - SELECT * FROM call_log WHERE id = bucket.call_log_id

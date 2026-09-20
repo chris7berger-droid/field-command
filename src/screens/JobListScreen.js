@@ -1,6 +1,7 @@
 /**
  * Job List — this week's jobs, plus undated live jobs so crew can punch
- * in when the office has not put the job on Home yet.
+ * in when the office has not put the job on Home yet. SEARCH ALL JOBS is the
+ * escape hatch for live jobs that are not on this week.
  */
 import React, { useMemo } from 'react';
 import {
@@ -111,6 +112,14 @@ export default function JobListScreen({ navigation, route, user }) {
         </View>
       </View>
 
+      <TouchableOpacity
+        style={styles.searchBtn}
+        activeOpacity={0.7}
+        onPress={() => navigation.navigate('JobSearch')}
+      >
+        <Text style={styles.searchBtnText}>SEARCH ALL JOBS</Text>
+      </TouchableOpacity>
+
       {isLoading ? (
         <View style={styles.center}>
           <Text style={styles.loadingText}>Loading jobs...</Text>
@@ -185,6 +194,11 @@ const styles = StyleSheet.create({
   syncRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   syncDot: { width: 8, height: 8, borderRadius: 4 },
   syncText: { fontFamily: F.bodyMed, fontSize: 12, color: C.white },
+  searchBtn: {
+    backgroundColor: C.dark, borderRadius: 10, paddingVertical: 16,
+    alignItems: 'center', marginHorizontal: S.md, marginTop: S.md,
+  },
+  searchBtnText: { fontFamily: F.display, fontSize: 16, color: C.teal, letterSpacing: 2 },
   list: { padding: S.md },
   pickHint: {
     fontFamily: F.bodyMed, fontSize: 14, color: C.textBody,

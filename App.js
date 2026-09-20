@@ -38,6 +38,7 @@ import PunchStatusBar from './src/components/PunchStatusBar';
 import LoginScreen from './src/screens/LoginScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import JobListScreen from './src/screens/JobListScreen';
+import JobSearchScreen from './src/screens/JobSearchScreen';
 import JobMenuScreen from './src/screens/JobMenuScreen';
 import JobDetailScreen from './src/screens/JobDetailScreen';
 import JobCustomerScreen from './src/screens/JobCustomerScreen';
@@ -216,6 +217,9 @@ export default function App() {
             </Stack.Screen>
             <Stack.Screen name="JobList">
               {(props) => <JobListScreen {...props} user={user} />}
+            </Stack.Screen>
+            <Stack.Screen name="JobSearch">
+              {(props) => <JobSearchScreen {...props} user={user} />}
             </Stack.Screen>
             <Stack.Screen name="JobMenu">
               {(props) => <JobMenuScreen {...props} user={user} />}
