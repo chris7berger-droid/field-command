@@ -658,13 +658,13 @@ export default function ReportTab({ jobId, employeeId, employeeName, jobName, na
         </View>
 
         {/* ═══ PRT Section ═══ */}
-        {section === 'prt' ? (
-          prtBlocked ? (
+        {(section === 'prt' && prtBlocked) ? (
           <ReportsGateCard
             copy={reportClockCopy(reportGate.kind, openLabel)}
             onConfirm={() => goClockFromGate(reportGate.kind, reportGate.openId)}
           />
-          ) : (
+        ) : null}
+        {(section === 'prt' && !prtBlocked) ? (
           <>
             <Text style={styles.sectionTitle}>PRODUCTION RATE TRACKER</Text>
             <Text style={styles.sectionHint}>
@@ -763,19 +763,18 @@ export default function ReportTab({ jobId, employeeId, employeeName, jobName, na
               </>
             )}
           </>
-          )
         ) : null}
 
         {/* ═══ Daily Log Section ═══ */}
-        {section === 'log' ? (
-          logBlocked ? (
+        {(section === 'log' && logBlocked) ? (
           <ReportsGateCard
             copy={logGate.kind === 'other'
               ? reportClockCopy('other', openLabel)
               : dailyLogAccessCopy(logGate.kind, openLabel)}
             onConfirm={() => goClockFromGate(logGate.kind, logGate.openId)}
           />
-          ) : (
+        ) : null}
+        {(section === 'log' && !logBlocked) ? (
           <>
             <Text style={styles.sectionTitle}>DAILY LOG</Text>
             <View style={styles.logDateNav}>
@@ -935,7 +934,6 @@ export default function ReportTab({ jobId, employeeId, employeeName, jobName, na
               </View>
             ) : null}
           </>
-          )
         ) : null}
 
       </ScrollView>
