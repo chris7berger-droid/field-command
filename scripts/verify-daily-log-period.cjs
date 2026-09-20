@@ -96,9 +96,9 @@ check('ReportTab renders the period-filtered list and keeps Add another', () => 
   assert.ok(tabSrc.includes('dailyLogEntriesForPeriod(viewedLogEntries, selectedLogType)'));
   assert.ok(tabSrc.includes('visibleLogEntries.map((entry)'));
   assert.ok(tabSrc.includes('openLogPeriod(lt.key, { compose: true })'));
-  assert.ok(tabSrc.includes("submittedTypes.has(lt.key) ? 'Add another'"));
+  assert.ok(tabSrc.includes("!historical && done ? 'Add another'"));
   assert.ok(tabSrc.includes('composerLogTypeAfterLoad(initialLogType, submittedTypes)'));
-  assert.ok(tabSrc.includes('if (viewDate !== today) return;'));
+  assert.ok(!tabSrc.includes("if (viewDate !== today) return;"));
   assert.ok(tabSrc.includes('uploadPhotos(photosToUpload, jobId)'));
 });
 

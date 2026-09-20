@@ -7,8 +7,13 @@ import { View, Text, ScrollView, TouchableOpacity, Alert, StyleSheet } from 'rea
 import { useQuery } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
 import { tod } from '../lib/utils';
+import { namesMatch } from '../lib/crew';
 import { LIVE_JOB_FILTER, jobNumber, tripLine, tripsByCallLog } from '../lib/trips';
-import { reportClockGate, reportClockCopy, openClockJobId, switchJobClockCopy, punchLookbackDate } from '../lib/dayDuty';
+import { assignmentDatesForJob, eligibleWorkDates, punchWorkDatesForJob } from '../lib/dailyLogHistory';
+import {
+  dailyLogAccessGate, reportClockGate, reportClockCopy, openClockJobId,
+  switchJobClockCopy, punchLookbackDate,
+} from '../lib/dayDuty';
 import LinenBackground from '../components/LinenBackground';
 
 const DESTINATIONS = [
@@ -19,9 +24,11 @@ const DESTINATIONS = [
   { key: 'JobSite', label: 'JOB SITE', screen: 'JobSite' },
 ];
 
-export default function JobMenuScreen({ route, navigation }) {
+export default function JobMenuScreen({ route, navigation, user }) {
   const { jobId, jobName, from } = route.params;
   const today = tod();
+  const userId = user?.id || '';
+  const userName = user?.name || '';
 
   const { data: jobRows } = useQuery(
     `SELECT * FROM call_log WHERE id = ?`,
@@ -47,8 +54,20 @@ export default function JobMenuScreen({ route, navigation }) {
   );
 
   const { data: punchRows } = useQuery(
-    `SELECT job_id, punch_type, punch_time FROM time_punches WHERE punch_date >= ? ORDER BY punch_time ASC`,
+    `SELECT job_id, employee_id, punch_type, punch_time, punch_date FROM time_punches WHERE punch_date >= ? ORDER BY punch_time ASC`,
     [punchLookbackDate(today)]
+  );
+  const { data: jobPunchRows } = useQuery(
+    `SELECT job_id, employee_id, punch_type, punch_time, punch_date FROM time_punches WHERE job_id = ? ORDER BY punch_time ASC`,
+    [jobId]
+  );
+  const { data: assignRows } = useQuery(
+    `SELECT j.call_log_id AS call_log_id, a.crew_name AS crew_name, a.date AS date,
+            a.team_member_id AS team_member_id
+       FROM assignments a
+       INNER JOIN jobs j ON j.id = a.job_id
+      WHERE j.call_log_id = ? AND ${LIVE_JOB_FILTER}`,
+    [jobId]
   );
 
   const { data: openJobRows } = useQuery(
@@ -73,18 +92,34 @@ export default function JobMenuScreen({ route, navigation }) {
     });
   };
 
+  const eligibleDates = useMemo(() => {
+    const assignmentDates = assignmentDatesForJob(assignRows, {
+      jobId, userId, memberName: userName, namesMatch,
+    });
+    const punchDates = punchWorkDatesForJob(jobPunchRows, { jobId, employeeId: userId });
+    return eligibleWorkDates({ assignmentDates, punchDates, today });
+  }, [assignRows, jobPunchRows, jobId, userId, userName, today]);
+
   const open = (dest) => {
     if (dest.key === 'Reports') {
-      const gate = reportClockGate(jobId, punchRows);
-      if (!gate.allowed) {
-        const copy = reportClockCopy(gate.kind, openLabel);
-        const destJob = gate.kind === 'other' && openJob ? openJob : job;
+      const prtGate = reportClockGate(jobId, punchRows);
+      const logGate = dailyLogAccessGate(jobId, punchRows, { eligible: eligibleDates.length > 0 });
+      if (!prtGate.allowed && !logGate.allowed) {
+        const copy = reportClockCopy(prtGate.kind === 'other' || logGate.kind === 'other' ? 'other' : prtGate.kind, openLabel);
+        const destJob = (prtGate.kind === 'other' || logGate.kind === 'other') && openJob ? openJob : job;
         Alert.alert(copy.title, copy.body || undefined, [
           { text: 'Cancel', style: 'cancel' },
           { text: copy.confirm, onPress: () => goClock(destJob) },
         ]);
         return;
       }
+      navigation.navigate(dest.screen, {
+        jobId,
+        jobName: job.job_name || jobName,
+        tab: 'Report',
+        reportSection: prtGate.allowed ? 'prt' : 'log',
+      });
+      return;
     }
     if (dest.key === 'TimeClock') {
       const openId = openClockJobId(punchRows);

@@ -200,6 +200,15 @@ check('PRT still uses reportClockGate', () => {
   assert.ok(homeSrc.includes('reportClockGate'));
 });
 
+check('new Daily Log writes set work_date and keep created_at', () => {
+  assert.ok(tabSrc.includes('work_date, synced, created_at'));
+  assert.ok(tabSrc.includes('new Date().toISOString()'));
+  assert.ok(tabSrc.includes('dailyLogAccessGate'));
+  assert.ok(tabSrc.includes("openLogPeriod('ADL'"));
+  assert.ok(tabSrc.includes('formatLogSubmittedAt(entry)'));
+  assert.ok(tabSrc.includes('Required Daily Log Due') || tabSrc.includes('requiredLogDueCopy'));
+});
+
 if (failed) {
   console.error(`\n${failed} failed`);
   process.exit(1);

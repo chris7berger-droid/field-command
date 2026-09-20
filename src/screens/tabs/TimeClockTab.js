@@ -25,6 +25,7 @@ import { fmtTime, tod } from '../../lib/utils';
 import { getCurrentPosition, getClockInPosition, checkGeofence, DEMO_POSITIONS } from '../../lib/location';
 import { fetchWeather } from '../../lib/weather';
 import { missingClockOutDuties, openClockJobId, switchJobClockCopy, punchLookbackDate, shiftDate, punchesForOpenShift } from '../../lib/dayDuty';
+import { entryWorkDate } from '../../lib/dailyLogHistory';
 import { jobNumber } from '../../lib/trips';
 import { requireCanonicalTeamMemberId, isMissingTeamMemberIdError } from '../../lib/activation';
 import { createClockInSubmitGuard } from '../../lib/clockInSubmitGuard';
@@ -125,8 +126,6 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     [todayPunches, jobId]
   );
   const shiftClockIn = (activePunches || []).find((p) => p.punch_type === 'clock_in');
-  const shiftStartIso = shiftClockIn?.punch_time
-    || new Date(workDate + 'T00:00:00').toISOString();
 
   // PRT + daily logs: clock-out waits until this shift's SOD, MOD, EOD, and PRT.
   const { data: prtRows } = useQuery(
@@ -137,9 +136,13 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     || !prtRows?.[0]?.created_at
     || String(prtRows[0].created_at) >= String(shiftClockIn.punch_time);
   const prtSubmitted = ['submitted', 'approved'].includes(prtRows?.[0]?.status) && prtAfterClockIn;
-  const { data: todayLogs } = useQuery(
-    `SELECT entry_type FROM daily_log_entries WHERE job_id = ? AND created_at >= ?`,
-    [jobId, shiftStartIso]
+  const { data: jobLogs } = useQuery(
+    `SELECT entry_type, work_date, created_at FROM daily_log_entries WHERE job_id = ?`,
+    [jobId]
+  );
+  const todayLogs = useMemo(
+    () => (jobLogs || []).filter((e) => entryWorkDate(e) === workDate),
+    [jobLogs, workDate]
   );
 
   useEffect(() => {

@@ -123,12 +123,12 @@ check('Daily Log query is this job, not today-only', () => {
   assert.ok(tabSrc.includes('dailyLogEntriesOnDate(logEntries, viewDate)'));
 });
 
-check('composer, start buttons, and sticky submit are today-only', () => {
-  assert.ok(tabSrc.includes('viewingToday && logType'));
-  assert.ok(tabSrc.includes(') : viewingToday ? ('));
-  assert.ok(tabSrc.includes("{section === 'log' && viewingToday && logType && ("));
-  assert.ok(tabSrc.includes("if (viewDate !== today) return;"));
-  assert.ok(tabSrc.includes("Read only — previous work day"));
+check('composer, start buttons, and sticky submit follow work date eligibility', () => {
+  assert.ok(tabSrc.includes('canWrite && logType'));
+  assert.ok(tabSrc.includes("{section === 'log' && canWrite && logType && ("));
+  assert.ok(tabSrc.includes('INSERT INTO daily_log_entries (id, job_id, employee_id, entry_type, photos, notes, work_date, synced, created_at)'));
+  assert.ok(!tabSrc.includes("if (viewDate !== today) return;"));
+  assert.ok(tabSrc.includes('Finish missing required logs for this work day'));
 });
 
 check('Daily Log content filters to the selected period', () => {
@@ -142,7 +142,7 @@ check('historical cards stay read-only (type, time, notes, photos)', () => {
   assert.ok(histStart >= 0 && histEnd > histStart);
   const hist = tabSrc.slice(histStart, histEnd);
   assert.ok(hist.includes('entry.entry_type'));
-  assert.ok(hist.includes("toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })"));
+  assert.ok(hist.includes('formatLogSubmittedAt(entry)'));
   assert.ok(hist.includes('entry.notes'));
   assert.ok(hist.includes('parseJSON(entry.photos, [])'));
   assert.ok(!hist.includes('onPress'));
@@ -150,13 +150,14 @@ check('historical cards stay read-only (type, time, notes, photos)', () => {
 });
 
 check('today composer, clock-out gating, and Home dots are unchanged', () => {
-  assert.ok(tabSrc.includes("submittedTypes.has(lt.key) ? 'Add another'"));
+  assert.ok(tabSrc.includes("!historical && done ? 'Add another'"));
   assert.ok(tabSrc.includes('composerLogTypeAfterLoad(initialLogType, submittedTypes)'));
   assert.ok(tabSrc.includes('uploadPhotos(photosToUpload, jobId)'));
   assert.ok(timeClockSrc.includes('missingClockOutDuties'));
-  assert.ok(timeClockSrc.includes('SELECT entry_type FROM daily_log_entries WHERE job_id = ? AND created_at >= ?'));
+  assert.ok(timeClockSrc.includes('entryWorkDate(e) === workDate'));
   assert.ok(homeSrc.includes('weekCardTitle}>THIS WEEK'));
-  assert.ok(homeSrc.includes('logType: isLog ? dutyKey : undefined'));
+  assert.ok(homeSrc.includes("logType: dutyKey"));
+  assert.ok(homeSrc.includes('weekDotLate'));
   assert.ok(!homeSrc.includes('setViewDate'));
 });
 

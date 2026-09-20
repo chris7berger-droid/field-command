@@ -217,7 +217,9 @@ export default function App() {
             <Stack.Screen name="JobList">
               {(props) => <JobListScreen {...props} user={user} />}
             </Stack.Screen>
-            <Stack.Screen name="JobMenu" component={JobMenuScreen} />
+            <Stack.Screen name="JobMenu">
+              {(props) => <JobMenuScreen {...props} user={user} />}
+            </Stack.Screen>
             <Stack.Screen name="JobDetail">
               {(props) => <JobDetailScreen {...props} user={user} />}
             </Stack.Screen>

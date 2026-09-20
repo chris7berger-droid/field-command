@@ -17,6 +17,7 @@ import { tod } from '../lib/utils';
 import { getCurrentPosition } from '../lib/location';
 import { fetchWeather } from '../lib/weather';
 import { requireCanonicalTeamMemberId, isMissingTeamMemberIdError } from '../lib/activation';
+import { entryWorkDate } from '../lib/dailyLogHistory';
 import {
   DUTY_LOGS, PRT_DUTY, dutyState,
   punchLookbackDate, openClockInPunch, isOvernightShift,
@@ -62,8 +63,8 @@ export default function PunchStatusBar() {
   );
 
   const { data: logEntries } = useQuery(
-    `SELECT job_id, entry_type, created_at FROM daily_log_entries WHERE created_at >= ?`,
-    [lookbackIso]
+    `SELECT job_id, entry_type, created_at, work_date FROM daily_log_entries WHERE created_at >= ? OR (work_date IS NOT NULL AND work_date >= ?)`,
+    [lookbackIso, lookback]
   );
 
   const { data: prtReports } = useQuery(
@@ -90,12 +91,10 @@ export default function PunchStatusBar() {
 
     const clockIn = openPunch;
     const jobId = String(clockIn.job_id);
-    const startMs = new Date(clockIn.punch_time).getTime();
     const types = new Set();
     for (const e of (logEntries || [])) {
-      if (String(e.job_id) !== jobId || !e.created_at) continue;
-      const when = new Date(e.created_at);
-      if (Number.isNaN(when.getTime()) || when.getTime() < startMs) continue;
+      if (String(e.job_id) !== jobId) continue;
+      if (entryWorkDate(e) !== workDate) continue;
       types.add(e.entry_type);
     }
     const prtDone = (prtReports || []).some(

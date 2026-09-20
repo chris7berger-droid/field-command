@@ -29,6 +29,7 @@ export default function JobDetailScreen({ route, navigation, user }) {
         key={`${reportSection || 'prt'}-${logType || ''}`}
         jobId={jobId}
         employeeId={employeeId}
+        employeeName={user?.name || ''}
         jobName={jobName}
         navigation={navigation}
         initialSection={reportSection}

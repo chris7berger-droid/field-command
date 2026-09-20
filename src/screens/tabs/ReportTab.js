@@ -17,11 +17,20 @@ import * as ImagePicker from 'expo-image-picker';
 import { usePowerSync, useQuery } from '@powersync/react';
 import { C, F, S } from '../../lib/tokens';
 import { parseJSON, parseJSONArray, tod, fmtDayLabel } from '../../lib/utils';
-import { adjacentLogDate, dailyLogEntriesForPeriod, dailyLogEntriesOnDate, dailyLogWorkDates } from '../../lib/dailyLogHistory';
+import {
+  adjacentLogDate, assignmentDatesForJob, canComposeAdlOnDate, canComposeRequiredOnDate,
+  canWriteDailyLogOnDate, dailyLogEntriesForPeriod, dailyLogEntriesOnDate, dailyLogWorkDates,
+  eligibleWorkDates, formatLogSubmittedAt, isRequiredLogType, missingRequiredLogTypes,
+  nextRequiredLogType, punchWorkDatesForJob, requiredLogDueCopy,
+} from '../../lib/dailyLogHistory';
+import { namesMatch } from '../../lib/crew';
 import { uploadPhotos } from '../../lib/photos';
 import LinenBackground from '../../components/LinenBackground';
 import { mergeDaysByDate } from './TasksTab';
-import { pickSowDaysForPrt, reportClockGate, reportClockCopy, punchLookbackDate, shiftDate } from '../../lib/dayDuty';
+import {
+  dailyLogAccessCopy, dailyLogAccessGate, pickSowDaysForPrt, reportClockGate, reportClockCopy,
+  punchLookbackDate, shiftDate,
+} from '../../lib/dayDuty';
 import { jobNumber } from '../../lib/trips';
 import { requireCanonicalTeamMemberId, isMissingTeamMemberIdError } from '../../lib/activation';
 import {
@@ -134,7 +143,7 @@ function prtRung(pctToday, targetPct) {
 
 /** Home duty navigation may pass SOD/MOD/EOD even when that type is already in. */
 export function composerLogTypeAfterLoad(initialLogType, submittedTypes) {
-  if (initialLogType === 'OTHER') return 'OTHER';
+  if (initialLogType === 'ADL' || initialLogType === 'OTHER') return 'ADL';
   if (initialLogType !== 'SOD' && initialLogType !== 'MOD' && initialLogType !== 'EOD') return null;
   if (submittedTypes && submittedTypes.has(initialLogType)) return null;
   return initialLogType;
@@ -142,13 +151,26 @@ export function composerLogTypeAfterLoad(initialLogType, submittedTypes) {
 
 /** Viewing a period is independent of whether the composer opens. */
 export function initialSelectedLogType(initialLogType) {
-  if (initialLogType === 'SOD' || initialLogType === 'MOD' || initialLogType === 'EOD' || initialLogType === 'OTHER') {
+  if (initialLogType === 'OTHER' || initialLogType === 'ADL') return 'ADL';
+  if (initialLogType === 'SOD' || initialLogType === 'MOD' || initialLogType === 'EOD') {
     return initialLogType;
   }
   return null;
 }
 
-export default function ReportTab({ jobId, employeeId, jobName, navigation, initialSection, initialLogType }) {
+function ReportsGateCard({ copy, onConfirm }) {
+  return (
+    <View style={styles.gateCard}>
+      <Text style={styles.gateTitle}>{copy.title}</Text>
+      {copy.body ? <Text style={styles.gateBody}>{copy.body}</Text> : null}
+      <TouchableOpacity style={styles.gateBtn} activeOpacity={0.7} onPress={onConfirm}>
+        <Text style={styles.gateBtnText}>{copy.confirm}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+export default function ReportTab({ jobId, employeeId, employeeName, jobName, navigation, initialSection, initialLogType }) {
   const db = usePowerSync();
   const today = tod();
   const [section, setSection] = useState(initialSection === 'log' ? 'log' : 'prt'); // 'prt' | 'log'
@@ -198,11 +220,31 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
     `SELECT job_id, punch_type, punch_time FROM time_punches WHERE punch_date >= ? ORDER BY punch_time ASC`,
     [lookback]
   );
+  const { data: jobPunchRows } = useQuery(
+    `SELECT job_id, employee_id, punch_type, punch_time, punch_date FROM time_punches WHERE job_id = ? ORDER BY punch_time ASC`,
+    [jobId]
+  );
+  const { data: assignRows } = useQuery(
+    `SELECT j.call_log_id AS call_log_id, a.crew_name AS crew_name, a.date AS date,
+            a.team_member_id AS team_member_id
+       FROM assignments a
+       INNER JOIN jobs j ON j.id = a.job_id
+      WHERE j.call_log_id = ? AND ${LIVE_JOB_FILTER}`,
+    [jobId]
+  );
   const workDate = shiftDate(punchRows, today);
   const reportGate = reportClockGate(jobId, punchRows);
+  const eligibleDates = useMemo(() => {
+    const assignmentDates = assignmentDatesForJob(assignRows, {
+      jobId, userId: employeeId, memberName: employeeName, namesMatch,
+    });
+    const punchDates = punchWorkDatesForJob(jobPunchRows, { jobId, employeeId });
+    return eligibleWorkDates({ assignmentDates, punchDates, today });
+  }, [assignRows, jobPunchRows, jobId, employeeId, employeeName, today]);
+  const logGate = dailyLogAccessGate(jobId, punchRows, { eligible: eligibleDates.length > 0 });
   const { data: clockJobRows } = useQuery(
     `SELECT * FROM call_log WHERE id = ?`,
-    [reportGate.openId || jobId]
+    [reportGate.openId || logGate.openId || jobId]
   );
 
   // Production day = prior submitted PRTs (office measures by day count, not
@@ -352,11 +394,17 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
     [logEntries, viewDate]
   );
   const workDates = useMemo(
-    () => dailyLogWorkDates(logEntries, today),
-    [logEntries, today]
+    () => dailyLogWorkDates(logEntries, today, eligibleDates),
+    [logEntries, today, eligibleDates]
   );
   const prevWorkDate = adjacentLogDate(workDates, viewDate, -1);
   const nextWorkDate = adjacentLogDate(workDates, viewDate, 1);
+  const historical = viewDate !== today;
+  const canWrite = canWriteDailyLogOnDate(viewDate, {
+    today,
+    eligibleDates,
+    clockedIntoJob: logGate.kind === 'clocked' || logGate.kind === 'unknown',
+  });
 
   const submittedTypes = useMemo(() => {
     return new Set(todaysLogEntries.map((e) => e.entry_type));
@@ -381,9 +429,20 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
     if (logLoading) return;
     if (appliedInitialLogType.current) return;
     appliedInitialLogType.current = true;
-    setSelectedLogType(initialSelectedLogType(initialLogType));
-    setLogType(composerLogTypeAfterLoad(initialLogType, submittedTypes));
-  }, [logLoading, initialLogType, submittedTypes]);
+    let selected = initialSelectedLogType(initialLogType);
+    let compose = composerLogTypeAfterLoad(initialLogType, submittedTypes);
+    if (compose === 'ADL' && !canComposeAdlOnDate(todaysLogEntries)) {
+      const due = nextRequiredLogType(todaysLogEntries);
+      if (due) {
+        const copy = requiredLogDueCopy(due);
+        Alert.alert(copy.title, copy.body);
+        selected = due;
+        compose = due;
+      }
+    }
+    setSelectedLogType(selected);
+    setLogType(compose);
+  }, [logLoading, initialLogType, submittedTypes, todaysLogEntries]);
 
   const clearComposer = useCallback(() => {
     setLogType(null);
@@ -392,17 +451,31 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
   }, []);
 
   const openLogPeriod = useCallback((type, { compose = false } = {}) => {
-    setSelectedLogType(type);
-    if (compose && viewingToday) {
-      if (logType !== type) {
+    let next = type === 'OTHER' ? 'ADL' : type;
+    if (compose && next === 'ADL' && !canComposeAdlOnDate(viewedLogEntries)) {
+      const due = nextRequiredLogType(viewedLogEntries);
+      if (due) {
+        const copy = requiredLogDueCopy(due);
+        Alert.alert(copy.title, copy.body);
+        next = due;
+      }
+    }
+    setSelectedLogType(next);
+    const allowCompose = compose && canWrite && (
+      next === 'ADL'
+        ? canComposeAdlOnDate(viewedLogEntries)
+        : canComposeRequiredOnDate(viewedLogEntries, next, { historical })
+    );
+    if (allowCompose) {
+      if (logType !== next) {
         setLogPhotos([]);
         setLogNotes('');
       }
-      setLogType(type);
+      setLogType(next);
       return;
     }
     clearComposer();
-  }, [viewingToday, logType, clearComposer]);
+  }, [canWrite, historical, viewedLogEntries, logType, clearComposer]);
 
   const getActorId = useCallback(() => {
     try {
@@ -491,7 +564,19 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
 
   // ── Daily Log Submit (optimistic — save immediately, upload photos in background) ──
   const submitLogEntry = useCallback(async () => {
-    if (viewDate !== today) return;
+    if (!canWrite) return;
+    if (isRequiredLogType(logType) && !canComposeRequiredOnDate(viewedLogEntries, logType, { historical })) {
+      return;
+    }
+    if (logType === 'ADL' && !canComposeAdlOnDate(viewedLogEntries)) {
+      const due = nextRequiredLogType(viewedLogEntries);
+      if (due) {
+        const copy = requiredLogDueCopy(due);
+        Alert.alert(copy.title, copy.body);
+        openLogPeriod(due, { compose: true });
+      }
+      return;
+    }
     if (!logNotes.trim()) { Alert.alert('Note required', 'Add a note before submitting.'); return; }
     if (logPhotos.length === 0) { Alert.alert('Photos required', 'Add at least one photo.'); return; }
 
@@ -503,8 +588,8 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
       const id = generateId();
       const localUris = [...logPhotos];
       await db.execute(
-        `INSERT INTO daily_log_entries (id, job_id, employee_id, entry_type, photos, notes, synced, created_at) VALUES (?,?,?,?,?,?,0,?)`,
-        [id, jobId, actorId, logType, JSON.stringify(localUris), logNotes.trim(), new Date().toISOString()]
+        `INSERT INTO daily_log_entries (id, job_id, employee_id, entry_type, photos, notes, work_date, synced, created_at) VALUES (?,?,?,?,?,?,?,0,?)`,
+        [id, jobId, actorId, logType, JSON.stringify(localUris), logNotes.trim(), viewDate, new Date().toISOString()]
       );
 
       // Reset form
@@ -544,42 +629,18 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
     } finally {
       setLogSubmitting(false);
     }
-  }, [viewDate, today, logType, logPhotos, logNotes, jobId, db, getActorId]);
+  }, [canWrite, historical, viewedLogEntries, logType, logPhotos, logNotes, viewDate, jobId, db, getActorId, openLogPeriod]);
 
   // ── Render ──────────────────────────────────────────────
-  if (Array.isArray(punchRows) && !reportGate.allowed) {
-    const openJob = clockJobRows?.[0];
-    const openLabel = jobNumber(openJob) || openJob?.job_name || 'that job';
-    const copy = reportClockCopy(reportGate.kind, openLabel);
-    const destId = reportGate.kind === 'other' ? (reportGate.openId || jobId) : jobId;
-    const destName = reportGate.kind === 'other'
-      ? (openJob?.job_name || jobName)
-      : jobName;
-    return (
-      <LinenBackground>
-        <ScrollView
-          style={{ flex: 1, backgroundColor: 'transparent' }}
-          contentContainerStyle={styles.content}
-        >
-          <View style={styles.gateCard}>
-            <Text style={styles.gateTitle}>{copy.title}</Text>
-            {copy.body ? <Text style={styles.gateBody}>{copy.body}</Text> : null}
-            <TouchableOpacity
-              style={styles.gateBtn}
-              activeOpacity={0.7}
-              onPress={() => navigation?.navigate('JobDetail', {
-                jobId: destId,
-                jobName: destName,
-                tab: 'TimeClock',
-              })}
-            >
-              <Text style={styles.gateBtnText}>{copy.confirm}</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-      </LinenBackground>
-    );
-  }
+  const openJob = clockJobRows?.[0];
+  const openLabel = jobNumber(openJob) || openJob?.job_name || 'that job';
+  const goClockFromGate = (kind, openId) => {
+    const destId = kind === 'other' ? (openId || jobId) : jobId;
+    const destName = kind === 'other' ? (openJob?.job_name || jobName) : jobName;
+    navigation?.navigate('JobDetail', { jobId: destId, jobName: destName, tab: 'TimeClock' });
+  };
+  const prtBlocked = Array.isArray(punchRows) && !reportGate.allowed;
+  const logBlocked = Array.isArray(punchRows) && !logGate.allowed;
 
   return (
     <LinenBackground>
@@ -597,7 +658,12 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
         </View>
 
         {/* ═══ PRT Section ═══ */}
-        {section === 'prt' && (
+        {section === 'prt' && prtBlocked ? (
+          <ReportsGateCard
+            copy={reportClockCopy(reportGate.kind, openLabel)}
+            onConfirm={() => goClockFromGate(reportGate.kind, reportGate.openId)}
+          />
+        ) : section === 'prt' ? (
           <>
             <Text style={styles.sectionTitle}>PRODUCTION RATE TRACKER</Text>
             <Text style={styles.sectionHint}>
@@ -699,7 +765,14 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
         )}
 
         {/* ═══ Daily Log Section ═══ */}
-        {section === 'log' && (
+        {section === 'log' && logBlocked ? (
+          <ReportsGateCard
+            copy={logGate.kind === 'other'
+              ? reportClockCopy('other', openLabel)
+              : dailyLogAccessCopy(logGate.kind, openLabel)}
+            onConfirm={() => goClockFromGate(logGate.kind, logGate.openId)}
+          />
+        ) : section === 'log' ? (
           <>
             <Text style={styles.sectionTitle}>DAILY LOG</Text>
             <View style={styles.logDateNav}>
@@ -734,9 +807,13 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
               </TouchableOpacity>
             </View>
             <Text style={styles.sectionHint}>
-              {viewingToday
-                ? 'Photo + note entries throughout the day. SOD, MOD, EOD required.'
-                : 'Read only — previous work day. Return to TODAY to add a log.'}
+              {!canWrite
+                ? 'Read only — this work day is not one you were assigned or punched.'
+                : viewingToday
+                  ? 'Photo + note entries throughout the day. SOD, MOD, EOD required.'
+                  : missingRequiredLogTypes(viewedLogEntries).length > 0
+                    ? 'Finish missing required logs for this work day. Submit time is when you save — the work date stays this day.'
+                    : 'Required logs for this work day are in. Additional logs are allowed. Submitted required logs stay read-only.'}
             </Text>
 
             {/* Status pills */}
@@ -749,7 +826,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
                     key={lt.key}
                     style={[styles.logStatusPill, done && styles.logStatusDone, selected && styles.logStatusSelected]}
                     onPress={() => openLogPeriod(lt.key, {
-                      compose: viewingToday && !viewedSubmittedTypes.has(lt.key),
+                      compose: canWrite && !viewedSubmittedTypes.has(lt.key),
                     })}
                     accessibilityRole="button"
                     accessibilityState={{ selected }}
@@ -771,7 +848,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
                     <View key={entry.id} style={styles.logEntryCard}>
                       <View style={styles.logEntryHeader}>
                         <View style={styles.logTypeBadge}><Text style={styles.logTypeText}>{entry.entry_type}</Text></View>
-                        <Text style={styles.logEntryTime}>{new Date(entry.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+                        <Text style={styles.logEntryTime}>{formatLogSubmittedAt(entry)}</Text>
                       </View>
                       {photos.length > 0 && (
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.logPhotoScroll}>
@@ -787,8 +864,8 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
               </View>
             )}
 
-            {/* New entry composer — today only */}
-            {viewingToday && logType ? (
+            {/* New entry composer when this work date is writable */}
+            {canWrite && logType ? (
               <View style={styles.composerCard}>
                 <View style={styles.composerHeader}>
                   <View style={styles.logTypeBadge}><Text style={styles.logTypeText}>{logType}</Text></View>
@@ -826,23 +903,31 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
                   style={styles.logNoteInput}
                   value={logNotes}
                   onChangeText={setLogNotes}
-                  placeholder={LOG_TYPES.find(l => l.key === logType)?.hint || 'Describe what you see...'}
+                  placeholder={
+                    logType === 'ADL'
+                      ? 'Additional photos and notes for this work day'
+                      : (LOG_TYPES.find(l => l.key === logType)?.hint || 'Describe what you see...')
+                  }
                   placeholderTextColor={C.textFaint}
                   multiline
                   textAlignVertical="top"
                 />
               </View>
-            ) : viewingToday ? (
+            ) : canWrite ? (
               <View style={styles.logButtons}>
-                {LOG_TYPES.map((lt) => (
-                  <TouchableOpacity key={lt.key} style={[styles.logStartBtn, submittedTypes.has(lt.key) && styles.logStartBtnDone]} onPress={() => openLogPeriod(lt.key, { compose: true })}>
-                    <Text style={styles.logStartBtnLabel}>{lt.label}</Text>
-                    <Text style={styles.logStartBtnHint}>{submittedTypes.has(lt.key) ? 'Add another' : lt.hint}</Text>
-                  </TouchableOpacity>
-                ))}
-                <TouchableOpacity style={styles.logStartBtn} onPress={() => openLogPeriod('OTHER', { compose: true })}>
-                  <Text style={styles.logStartBtnLabel}>+ ADD ENTRY</Text>
-                  <Text style={styles.logStartBtnHint}>Extra photos and notes anytime</Text>
+                {LOG_TYPES.map((lt) => {
+                  const done = viewedSubmittedTypes.has(lt.key);
+                  if (historical && done) return null;
+                  return (
+                    <TouchableOpacity key={lt.key} style={[styles.logStartBtn, done && styles.logStartBtnDone]} onPress={() => openLogPeriod(lt.key, { compose: true })}>
+                      <Text style={styles.logStartBtnLabel}>{lt.label}</Text>
+                      <Text style={styles.logStartBtnHint}>{!historical && done ? 'Add another' : lt.hint}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+                <TouchableOpacity style={styles.logStartBtn} onPress={() => openLogPeriod('ADL', { compose: true })}>
+                  <Text style={styles.logStartBtnLabel}>+ ADDITIONAL LOG</Text>
+                  <Text style={styles.logStartBtnHint}>Extra photos and notes after SOD, MOD, and EOD</Text>
                 </TouchableOpacity>
               </View>
             ) : null}
@@ -853,7 +938,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
 
       {/* Sticky action bar — always visible so the crew can submit from anywhere
           in the form, not only after scrolling to the bottom. */}
-      {section === 'prt' && prtView.showSticky && (
+      {section === 'prt' && !prtBlocked && prtView.showSticky && (
         <View style={styles.stickyBar}>
           {editing ? (
             <TouchableOpacity
@@ -873,7 +958,7 @@ export default function ReportTab({ jobId, employeeId, jobName, navigation, init
         </View>
       )}
 
-      {section === 'log' && viewingToday && logType && (
+      {section === 'log' && canWrite && logType && (
         <View style={styles.stickyBar}>
           <TouchableOpacity style={[styles.submitBtn, logSubmitting && { opacity: 0.5 }]} onPress={submitLogEntry} disabled={logSubmitting}>
             <Text style={styles.submitBtnText}>{logSubmitting ? 'SAVING...' : `SUBMIT ${logType}`}</Text>

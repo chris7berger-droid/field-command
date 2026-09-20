@@ -10,7 +10,7 @@ const vm = require('vm');
 const tabPath = path.join(__dirname, '../src/screens/tabs/ReportTab.js');
 const tabSrc = fs.readFileSync(tabPath, 'utf8');
 const start = tabSrc.indexOf('export function composerLogTypeAfterLoad');
-const end = tabSrc.indexOf('export default function ReportTab');
+const end = tabSrc.indexOf('function ReportsGateCard');
 assert.ok(start >= 0 && end > start, 'composerLogTypeAfterLoad must exist');
 const fnSrc = tabSrc.slice(start, end).replace(/^export /gm, '');
 const sandbox = { module: { exports: {} }, exports: {} };
@@ -45,12 +45,14 @@ check('duty navigation still selects that period even when composer stays closed
   assert.strictEqual(initialSelectedLogType('SOD'), 'SOD');
   assert.strictEqual(initialSelectedLogType('MOD'), 'MOD');
   assert.strictEqual(initialSelectedLogType('EOD'), 'EOD');
-  assert.strictEqual(initialSelectedLogType('OTHER'), 'OTHER');
+  assert.strictEqual(initialSelectedLogType('OTHER'), 'ADL');
+  assert.strictEqual(initialSelectedLogType('ADL'), 'ADL');
   assert.strictEqual(initialSelectedLogType(undefined), null);
 });
 
-check('OTHER and invalid initials are unchanged', () => {
-  assert.strictEqual(composerLogTypeAfterLoad('OTHER', new Set(['SOD'])), 'OTHER');
+check('OTHER initials become ADL; invalid initials stay closed', () => {
+  assert.strictEqual(composerLogTypeAfterLoad('ADL', new Set(['SOD'])), 'ADL');
+  assert.strictEqual(composerLogTypeAfterLoad('OTHER', new Set(['SOD'])), 'ADL');
   assert.strictEqual(composerLogTypeAfterLoad(undefined, new Set()), null);
   assert.strictEqual(composerLogTypeAfterLoad('PRT', new Set()), null);
 });
@@ -60,12 +62,13 @@ check('ReportTab applies the helper after logs load, once', () => {
   assert.ok(tabSrc.includes('if (logLoading) return'));
   assert.ok(tabSrc.includes('composerLogTypeAfterLoad(initialLogType, submittedTypes)'));
   assert.ok(tabSrc.includes('openLogPeriod(lt.key, { compose: true })'));
-  assert.ok(tabSrc.includes("submittedTypes.has(lt.key) ? 'Add another'"));
+  assert.ok(tabSrc.includes("!historical && done ? 'Add another'"));
+  assert.ok(tabSrc.includes("openLogPeriod('ADL', { compose: true })"));
 });
 
 check('Home still passes logType for duty navigation', () => {
   const home = fs.readFileSync(path.join(__dirname, '../src/screens/HomeScreen.js'), 'utf8');
-  assert.ok(home.includes('logType: isLog ? dutyKey : undefined'));
+  assert.ok(home.includes('logType: dutyKey'));
 });
 
 if (failed) {

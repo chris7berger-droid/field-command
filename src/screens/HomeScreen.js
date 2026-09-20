@@ -8,15 +8,20 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, StyleSheet } from 'react-native';
 import { useQuery } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
-import { parseJSON, parseJSONArray, tod, addDaysYmd, localYmd } from '../lib/utils';
+import { parseJSON, parseJSONArray, tod, addDaysYmd } from '../lib/utils';
 import {
   LIVE_JOB_FILTER, jobNumber, tripLine, tripsByCallLog,
 } from '../lib/trips';
-import { crewByCallLog, crewLine, buildHomeWeekJobs } from '../lib/crew';
+import { crewByCallLog, crewLine, buildHomeWeekJobs, namesMatch } from '../lib/crew';
 import {
   DUTY_LOGS, PRT_DUTY, dutyState, pickSowDaysForPrt,
   openClockInPunch, punchDay, punchLookbackDate, reportClockGate, reportClockCopy,
+  dailyLogAccessGate,
 } from '../lib/dayDuty';
+import {
+  applicableClockOutTime, assignmentDatesForJob, eligibleWorkDates, entryWorkDate,
+  punchWorkDatesForJob, requiredPeriodStatus,
+} from '../lib/dailyLogHistory';
 import { mergeDaysByDate } from './tabs/TasksTab';
 import LinenBackground from '../components/LinenBackground';
 
@@ -185,9 +190,9 @@ export default function HomeScreen({ navigation, user }) {
     [lookback, monday]
   );
   const { data: weekLogs } = useQuery(
-    `SELECT job_id, entry_type, created_at FROM daily_log_entries
-      WHERE created_at >= ?`,
-    [logFromIso]
+    `SELECT job_id, entry_type, created_at, work_date FROM daily_log_entries
+      WHERE created_at >= ? OR (work_date IS NOT NULL AND work_date >= ?)`,
+    [logFromIso, lookback < monday ? lookback : monday]
   );
 
   const wtcsByJob = useMemo(() => {
@@ -203,13 +208,11 @@ export default function HomeScreen({ navigation, user }) {
   const logsByJobDate = useMemo(() => {
     const m = new Map();
     for (const e of (weekLogs || [])) {
-      if (!e.created_at) continue;
-      const when = new Date(e.created_at);
-      if (Number.isNaN(when.getTime())) continue;
-      const date = localYmd(when);
+      const date = entryWorkDate(e);
+      if (!date) continue;
       const key = `${String(e.job_id)}|${date}`;
-      if (!m.has(key)) m.set(key, new Set());
-      m.get(key).add(e.entry_type);
+      if (!m.has(key)) m.set(key, []);
+      m.get(key).push(e);
     }
     return m;
   }, [weekLogs]);
@@ -253,15 +256,20 @@ export default function HomeScreen({ navigation, user }) {
   const weekStrip = useMemo(() => weekDates.map((date) => {
     const isFuture = date > today;
     const isToday = date === today;
-    const onDay = (e, type) => {
-      if (!e.created_at || e.entry_type !== type) return false;
-      if (!visibleJobIds.has(String(e.job_id))) return false;
-      const when = new Date(e.created_at);
-      return !Number.isNaN(when.getTime()) && localYmd(when) === date;
+    const periodLight = (type) => {
+      let done = false;
+      let late = false;
+      for (const jobId of visibleJobIds) {
+        const entries = logsByJobDate.get(`${jobId}|${date}`) || [];
+        const clockOut = applicableClockOutTime(weekPunches, {
+          jobId, employeeId: userId, workDate: date,
+        });
+        const st = requiredPeriodStatus(entries, type, clockOut);
+        if (st === 'done') done = true;
+        if (st === 'late') late = true;
+      }
+      return { key: type, on: done || late, late: late && !done };
     };
-    const sod = (weekLogs || []).some((e) => onDay(e, 'SOD'));
-    const mod = (weekLogs || []).some((e) => onDay(e, 'MOD'));
-    const eod = (weekLogs || []).some((e) => onDay(e, 'EOD'));
     const report = (weekReports || []).find((r) => (
       r.report_date === date
       && visibleJobIds.has(String(r.job_id))
@@ -272,13 +280,13 @@ export default function HomeScreen({ navigation, user }) {
       isToday,
       isFuture,
       lights: [
-        { key: 'SOD', on: sod },
-        { key: 'MOD', on: mod },
-        { key: 'EOD', on: eod },
+        periodLight('SOD'),
+        periodLight('MOD'),
+        periodLight('EOD'),
         { key: 'PRT', on: !!report, hit: report ? prtHit(report) : false },
       ],
     };
-  }), [weekDates, today, weekLogs, weekReports, visibleJobIds]);
+  }), [weekDates, today, logsByJobDate, weekReports, visibleJobIds, weekPunches, userId]);
 
   const goMenu = (job) => {
     navigation.navigate('JobMenu', { jobId: job.id, jobName: job.job_name });
@@ -293,15 +301,43 @@ export default function HomeScreen({ navigation, user }) {
   };
 
   const goDuty = (job, dutyKey) => {
+    const isLog = dutyKey === 'SOD' || dutyKey === 'MOD' || dutyKey === 'EOD';
+    if (isLog) {
+      const assignmentDates = assignmentDatesForJob(assignRows, {
+        jobId: job.id, userId, memberName: userName, namesMatch,
+      });
+      const punchDates = punchWorkDatesForJob(weekPunches, { jobId: job.id, employeeId: userId });
+      const eligible = eligibleWorkDates({ assignmentDates, punchDates, today }).length > 0;
+      const logGate = dailyLogAccessGate(job.id, weekPunches == null ? null : weekPunches, { eligible });
+      if (logGate.allowed) {
+        navigation.navigate('JobDetail', {
+          jobId: job.id,
+          jobName: job.job_name,
+          tab: 'Report',
+          reportSection: 'log',
+          logType: dutyKey,
+        });
+        return;
+      }
+      const openJob = (jobs || []).find((j) => String(j.id) === logGate.openId);
+      const openLabel = jobNumber(openJob) || openJob?.job_name || 'that job';
+      const copy = logGate.kind === 'other'
+        ? reportClockCopy('other', openLabel)
+        : reportClockCopy('none');
+      const dest = logGate.kind === 'other' && openJob ? openJob : job;
+      Alert.alert(copy.title, copy.body || undefined, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: copy.confirm, onPress: () => goClock(dest) },
+      ]);
+      return;
+    }
     const gate = reportClockGate(job.id, weekPunches == null ? null : weekPunches);
     if (gate.allowed) {
-      const isLog = dutyKey === 'SOD' || dutyKey === 'MOD' || dutyKey === 'EOD';
       navigation.navigate('JobDetail', {
         jobId: job.id,
         jobName: job.job_name,
         tab: 'Report',
-        reportSection: isLog ? 'log' : 'prt',
-        logType: isLog ? dutyKey : undefined,
+        reportSection: 'prt',
       });
       return;
     }
@@ -344,7 +380,9 @@ export default function HomeScreen({ navigation, user }) {
                         <View
                           style={[
                             styles.weekDot,
-                            l.on && (l.key === 'PRT' && l.hit === false ? styles.weekDotShort : styles.weekDotOn),
+                            l.on && (l.key === 'PRT' && l.hit === false
+                              ? styles.weekDotShort
+                              : l.late ? styles.weekDotLate : styles.weekDotOn),
                             col.isFuture && styles.weekDotFuture,
                           ]}
                         />
@@ -379,34 +417,32 @@ export default function HomeScreen({ navigation, user }) {
           const crew = crewLine(crewAssignByJob.get(id), leadByJob.get(id));
           const priorCount = priorCountByJob.get(id) || 0;
           const dutyDate = String(job.id) === onJobId ? workDate : today;
-          let types = logsByJobDate.get(`${id}|${dutyDate}`) || new Set();
-          if (String(job.id) === onJobId && openPunch?.punch_time) {
-            const start = new Date(openPunch.punch_time).getTime();
-            types = new Set();
-            for (const e of (weekLogs || [])) {
-              if (String(e.job_id) !== id || !e.created_at) continue;
-              const when = new Date(e.created_at);
-              if (!Number.isNaN(when.getTime()) && when.getTime() >= start) {
-                types.add(e.entry_type);
-              }
-            }
-          }
+          const dayEntries = logsByJobDate.get(`${id}|${dutyDate}`) || [];
+          const clockOut = applicableClockOutTime(weekPunches, {
+            jobId: id, employeeId: userId, workDate: dutyDate,
+          });
           const report = reportsByJobDate.get(`${id}|${dutyDate}`);
           const prtDone = report && (report.status === 'submitted' || report.status === 'approved');
           const clockIn = String(job.id) === onJobId ? openPunch.punch_time : null;
           const sow = sowLineForJob(wtcsByJob.get(id), tripsByJob.get(id), dutyDate, priorCount);
           const items = [
-            ...DUTY_LOGS.map((d) => ({
-              ...d,
-              done: types.has(d.key),
-              state: dutyState({
-                done: types.has(d.key),
-                clockInTime: clockIn,
-                now,
-                dueAfterMs: d.dueAfterMs,
-                dueHour: d.dueHour,
-              }),
-            })),
+            ...DUTY_LOGS.map((d) => {
+              const status = requiredPeriodStatus(dayEntries, d.key, clockOut);
+              const done = status === 'done' || status === 'late';
+              return {
+                ...d,
+                done,
+                state: status === 'late'
+                  ? 'late'
+                  : dutyState({
+                    done,
+                    clockInTime: clockIn,
+                    now,
+                    dueAfterMs: d.dueAfterMs,
+                    dueHour: d.dueHour,
+                  }),
+              };
+            }),
             {
               ...PRT_DUTY,
               done: !!prtDone,
@@ -462,6 +498,7 @@ export default function HomeScreen({ navigation, user }) {
                       styles.dutyRow,
                       it.state === 'done' && styles.dutyRowDone,
                       it.state === 'due' && styles.dutyRowDue,
+                      it.state === 'late' && styles.dutyRowLate,
                     ]}
                     activeOpacity={0.7}
                     onPress={() => goDuty(job, it.key)}
@@ -470,11 +507,13 @@ export default function HomeScreen({ navigation, user }) {
                       styles.dutyLamp,
                       it.state === 'done' && styles.dutyLampOn,
                       it.state === 'due' && styles.dutyLampDue,
+                      it.state === 'late' && styles.dutyLampLate,
                     ]} />
                     <Text style={[
                       styles.dutyLabel,
                       it.state === 'done' && styles.dutyLabelOn,
                       it.state === 'due' && styles.dutyLabelDue,
+                      it.state === 'late' && styles.dutyLabelLate,
                     ]}>
                       {it.label}
                     </Text>
@@ -482,8 +521,9 @@ export default function HomeScreen({ navigation, user }) {
                       styles.dutyStatus,
                       it.state === 'done' && styles.dutyStatusOn,
                       it.state === 'due' && styles.dutyStatusDue,
+                      it.state === 'late' && styles.dutyStatusLate,
                     ]}>
-                      {it.state === 'done' ? (it.extra || 'DONE') : it.state === 'due' ? 'DUE' : (it.extra || '')}
+                      {it.state === 'done' ? (it.extra || 'DONE') : it.state === 'due' ? 'DUE' : it.state === 'late' ? 'LATE' : (it.extra || '')}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -545,6 +585,7 @@ const styles = StyleSheet.create({
   weekDotCell: { flex: 1, alignItems: 'center' },
   weekDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.12)' },
   weekDotOn: { backgroundColor: C.teal },
+  weekDotLate: { backgroundColor: C.amber },
   weekDotShort: { backgroundColor: C.amber },
   weekDotFuture: { opacity: 0.35 },
   weekColLabel: { fontFamily: F.display, fontSize: 10, color: C.textFaint, letterSpacing: 1, marginTop: 2, textAlign: 'center' },
@@ -586,15 +627,19 @@ const styles = StyleSheet.create({
   },
   dutyRowDone: { backgroundColor: C.dark, opacity: 1 },
   dutyRowDue: { opacity: 1, borderWidth: 1, borderColor: C.amber },
+  dutyRowLate: { backgroundColor: C.dark, opacity: 1, borderWidth: 1, borderColor: C.amber },
   dutyLamp: { width: 10, height: 10, borderRadius: 5, backgroundColor: C.textFaint },
   dutyLampOn: { backgroundColor: C.teal },
   dutyLampDue: { backgroundColor: C.amber },
+  dutyLampLate: { backgroundColor: C.amber },
   dutyLabel: { flex: 1, fontFamily: F.display, fontSize: 14, color: C.textMuted, letterSpacing: 1.5 },
   dutyLabelOn: { color: C.teal },
   dutyLabelDue: { color: C.textHead },
+  dutyLabelLate: { color: C.amber },
   dutyStatus: { fontFamily: F.display, fontSize: 11, color: C.textFaint, letterSpacing: 1 },
   dutyStatusOn: { color: C.teal },
   dutyStatusDue: { color: C.amber },
+  dutyStatusLate: { color: C.amber },
 
   pride: { fontFamily: F.display, fontSize: 13, color: C.tealDark, letterSpacing: 1.5, textAlign: 'center', marginTop: S.md },
   prideHint: { fontFamily: F.body, fontSize: 12, color: C.textFaint, textAlign: 'center', marginTop: S.sm },
