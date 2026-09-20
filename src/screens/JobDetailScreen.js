@@ -17,7 +17,7 @@ const TITLES = {
 };
 
 export default function JobDetailScreen({ route, navigation, user }) {
-  const { jobId, jobName, tab = 'TimeClock', reportSection, logType } = route.params;
+  const { jobId, jobName, tab = 'TimeClock', reportSection, logType, logDate } = route.params;
   const employeeId = user?.id || null;
 
   let body = null;
@@ -26,7 +26,7 @@ export default function JobDetailScreen({ route, navigation, user }) {
   } else if (tab === 'Report') {
     body = (
       <ReportTab
-        key={`${reportSection || 'prt'}-${logType || ''}`}
+        key={`${reportSection || 'prt'}-${logType || ''}-${logDate || ''}`}
         jobId={jobId}
         employeeId={employeeId}
         employeeName={user?.name || ''}
@@ -34,6 +34,7 @@ export default function JobDetailScreen({ route, navigation, user }) {
         navigation={navigation}
         initialSection={reportSection}
         initialLogType={logType}
+        initialLogDate={logDate}
       />
     );
   } else {

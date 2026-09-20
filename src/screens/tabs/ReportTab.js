@@ -143,7 +143,7 @@ function prtRung(pctToday, targetPct) {
 
 /** Home duty navigation may pass SOD/MOD/EOD even when that type is already in. */
 export function composerLogTypeAfterLoad(initialLogType, submittedTypes) {
-  if (initialLogType === 'ADL' || initialLogType === 'OTHER') return 'ADL';
+  if (initialLogType === 'ADL' || initialLogType === 'OTHER') return null;
   if (initialLogType !== 'SOD' && initialLogType !== 'MOD' && initialLogType !== 'EOD') return null;
   if (submittedTypes && submittedTypes.has(initialLogType)) return null;
   return initialLogType;
@@ -170,7 +170,7 @@ function ReportsGateCard({ copy, onConfirm }) {
   );
 }
 
-export default function ReportTab({ jobId, employeeId, employeeName, jobName, navigation, initialSection, initialLogType }) {
+export default function ReportTab({ jobId, employeeId, employeeName, jobName, navigation, initialSection, initialLogType, initialLogDate }) {
   const db = usePowerSync();
   const today = tod();
   const [section, setSection] = useState(initialSection === 'log' ? 'log' : 'prt'); // 'prt' | 'log'
@@ -378,12 +378,16 @@ export default function ReportTab({ jobId, employeeId, employeeName, jobName, na
     [jobId]
   );
 
-  const [viewDate, setViewDate] = useState(today);
+  const [viewDate, setViewDate] = useState(() => {
+    const d = String(initialLogDate || '').trim().slice(0, 10);
+    return d && d <= today ? d : today;
+  });
   const viewingToday = viewDate === today;
 
   useEffect(() => {
-    setViewDate(today);
-  }, [jobId, today]);
+    const d = String(initialLogDate || '').trim().slice(0, 10);
+    setViewDate(d && d <= today ? d : today);
+  }, [jobId, today, initialLogDate]);
 
   const todaysLogEntries = useMemo(
     () => dailyLogEntriesOnDate(logEntries, today),
@@ -841,6 +845,16 @@ export default function ReportTab({ jobId, employeeId, employeeName, jobName, na
               })}
             </View>
 
+            {canWrite && !logType && canComposeAdlOnDate(viewedLogEntries) ? (
+              <TouchableOpacity
+                style={[styles.logStartBtn, { marginBottom: S.md }]}
+                onPress={() => openLogPeriod('ADL', { compose: true })}
+              >
+                <Text style={styles.logStartBtnLabel}>+ ADDITIONAL LOG</Text>
+                <Text style={styles.logStartBtnHint}>Extra photos and notes after SOD, MOD, and EOD</Text>
+              </TouchableOpacity>
+            ) : null}
+
             {/* Submitted entries for the selected period only */}
             {visibleLogEntries.length > 0 && (
               <View style={styles.logHistory}>
@@ -915,7 +929,7 @@ export default function ReportTab({ jobId, employeeId, employeeName, jobName, na
                   textAlignVertical="top"
                 />
               </View>
-            ) : canWrite ? (
+            ) : canWrite && !(historical && missingRequiredLogTypes(viewedLogEntries).length === 0) ? (
               <View style={styles.logButtons}>
                 {LOG_TYPES.map((lt) => {
                   const done = viewedSubmittedTypes.has(lt.key);
@@ -927,10 +941,6 @@ export default function ReportTab({ jobId, employeeId, employeeName, jobName, na
                     </TouchableOpacity>
                   );
                 })}
-                <TouchableOpacity style={styles.logStartBtn} onPress={() => openLogPeriod('ADL', { compose: true })}>
-                  <Text style={styles.logStartBtnLabel}>+ ADDITIONAL LOG</Text>
-                  <Text style={styles.logStartBtnHint}>Extra photos and notes after SOD, MOD, and EOD</Text>
-                </TouchableOpacity>
               </View>
             ) : null}
           </>

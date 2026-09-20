@@ -50,9 +50,9 @@ check('duty navigation still selects that period even when composer stays closed
   assert.strictEqual(initialSelectedLogType(undefined), null);
 });
 
-check('OTHER initials become ADL; invalid initials stay closed', () => {
-  assert.strictEqual(composerLogTypeAfterLoad('ADL', new Set(['SOD'])), 'ADL');
-  assert.strictEqual(composerLogTypeAfterLoad('OTHER', new Set(['SOD'])), 'ADL');
+check('OTHER and ADL select the period without auto-opening the composer', () => {
+  assert.strictEqual(composerLogTypeAfterLoad('ADL', new Set(['SOD'])), null);
+  assert.strictEqual(composerLogTypeAfterLoad('OTHER', new Set(['SOD'])), null);
   assert.strictEqual(composerLogTypeAfterLoad(undefined, new Set()), null);
   assert.strictEqual(composerLogTypeAfterLoad('PRT', new Set()), null);
 });

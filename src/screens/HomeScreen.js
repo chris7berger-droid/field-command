@@ -20,7 +20,7 @@ import {
 } from '../lib/dayDuty';
 import {
   applicableClockOutTime, assignmentDatesForJob, eligibleWorkDates, entryWorkDate,
-  punchWorkDatesForJob, requiredPeriodStatus,
+  punchWorkDatesForJob, requiredPeriodStatus, adlCountOnDate,
 } from '../lib/dailyLogHistory';
 import { mergeDaysByDate } from './tabs/TasksTab';
 import LinenBackground from '../components/LinenBackground';
@@ -38,7 +38,7 @@ function getSunday(monday) {
 }
 
 const DAY_LABELS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-const WEEK_DUTY_KEYS = [...DUTY_LOGS.map((d) => d.short), PRT_DUTY.short];
+const WEEK_DUTY_KEYS = [...DUTY_LOGS.map((d) => d.short), PRT_DUTY.short, 'ADL'];
 
 function getWeekDates(monday) {
   return Array.from({ length: 7 }, (_, i) => addDaysYmd(monday, i));
@@ -275,6 +275,16 @@ export default function HomeScreen({ navigation, user }) {
       && visibleJobIds.has(String(r.job_id))
       && (r.status === 'submitted' || r.status === 'approved')
     ));
+    let adlCount = 0;
+    let adlJobId = null;
+    for (const job of (weekJobs || [])) {
+      const id = String(job.id);
+      const n = adlCountOnDate(logsByJobDate.get(`${id}|${date}`) || []);
+      if (n > 0) {
+        adlCount += n;
+        if (!adlJobId || id === onJobId) adlJobId = job.id;
+      }
+    }
     return {
       date,
       isToday,
@@ -284,9 +294,10 @@ export default function HomeScreen({ navigation, user }) {
         periodLight('MOD'),
         periodLight('EOD'),
         { key: 'PRT', on: !!report, hit: report ? prtHit(report) : false },
+        { key: 'ADL', count: adlCount, jobId: adlJobId },
       ],
     };
-  }), [weekDates, today, logsByJobDate, weekReports, visibleJobIds, weekPunches, userId]);
+  }), [weekDates, today, logsByJobDate, weekReports, visibleJobIds, weekPunches, userId, weekJobs, onJobId]);
 
   const goMenu = (job) => {
     navigation.navigate('JobMenu', { jobId: job.id, jobName: job.job_name });
@@ -297,6 +308,39 @@ export default function HomeScreen({ navigation, user }) {
       jobId: job.id,
       jobName: job.job_name,
       tab: 'TimeClock',
+    });
+  };
+
+  const goWeekAdl = (date, jobId) => {
+    const job = (weekJobs || []).find((j) => String(j.id) === String(jobId))
+      || (jobs || []).find((j) => String(j.id) === String(jobId));
+    if (!job) return;
+    const assignmentDates = assignmentDatesForJob(assignRows, {
+      jobId: job.id, userId, memberName: userName, namesMatch,
+    });
+    const punchDates = punchWorkDatesForJob(weekPunches, { jobId: job.id, employeeId: userId });
+    const eligible = eligibleWorkDates({ assignmentDates, punchDates, today }).length > 0;
+    const logGate = dailyLogAccessGate(job.id, weekPunches == null ? null : weekPunches, { eligible });
+    if (!logGate.allowed) {
+      const openJob = (jobs || []).find((j) => String(j.id) === logGate.openId);
+      const openLabel = jobNumber(openJob) || openJob?.job_name || 'that job';
+      const copy = logGate.kind === 'other'
+        ? reportClockCopy('other', openLabel)
+        : reportClockCopy('none');
+      const dest = logGate.kind === 'other' && openJob ? openJob : job;
+      Alert.alert(copy.title, copy.body || undefined, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: copy.confirm, onPress: () => goClock(dest) },
+      ]);
+      return;
+    }
+    navigation.navigate('JobDetail', {
+      jobId: job.id,
+      jobName: job.job_name,
+      tab: 'Report',
+      reportSection: 'log',
+      logType: 'ADL',
+      logDate: date,
     });
   };
 
@@ -375,6 +419,35 @@ export default function HomeScreen({ navigation, user }) {
                 <View style={styles.weekRowDots}>
                   {weekStrip.map((col) => {
                     const l = col.lights[row];
+                    if (!l) return <View key={col.date} style={styles.weekDotCell} />;
+                    if (l.key === 'ADL') {
+                      const count = l.count || 0;
+                      const mark = count > 0 ? (
+                        <Text style={[styles.weekAdlCount, col.isFuture && styles.weekDotFuture]}>{count}</Text>
+                      ) : (
+                        <View style={[styles.weekDot, col.isFuture && styles.weekDotFuture]} />
+                      );
+                      if (count > 0 && l.jobId && !col.isFuture) {
+                        return (
+                          <View key={col.date} style={styles.weekDotCell}>
+                            <TouchableOpacity
+                              onPress={() => goWeekAdl(col.date, l.jobId)}
+                              activeOpacity={0.7}
+                              accessibilityRole="button"
+                              accessibilityLabel={`${count} additional daily ${count === 1 ? 'log' : 'logs'}`}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                              {mark}
+                            </TouchableOpacity>
+                          </View>
+                        );
+                      }
+                      return (
+                        <View key={col.date} style={styles.weekDotCell}>
+                          {mark}
+                        </View>
+                      );
+                    }
                     return (
                       <View key={col.date} style={styles.weekDotCell}>
                         <View
@@ -588,6 +661,7 @@ const styles = StyleSheet.create({
   weekDotLate: { backgroundColor: C.amber },
   weekDotShort: { backgroundColor: C.amber },
   weekDotFuture: { opacity: 0.35 },
+  weekAdlCount: { fontFamily: F.display, fontSize: 12, color: C.teal, letterSpacing: 0, lineHeight: 14 },
   weekColLabel: { fontFamily: F.display, fontSize: 10, color: C.textFaint, letterSpacing: 1, marginTop: 2, textAlign: 'center' },
   weekColLabelToday: { color: C.teal },
 

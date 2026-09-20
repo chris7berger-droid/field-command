@@ -75,6 +75,10 @@ export function isSupplementalLogType(type) {
   return type === 'ADL' || type === 'OTHER';
 }
 
+export function adlCountOnDate(entriesOnDate) {
+  return (entriesOnDate || []).filter((e) => isSupplementalLogType(e.entry_type)).length;
+}
+
 export function missingRequiredLogTypes(entriesOnDate) {
   const have = new Set(
     (entriesOnDate || [])

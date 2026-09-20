@@ -26,7 +26,7 @@ vm.runInNewContext(
     missingRequiredLogTypes, nextRequiredLogType, eligibleWorkDates,
     canWriteDailyLogOnDate, punchWorkDate, punchWorkDatesForJob,
     applicableClockOutTime, requiredPeriodStatus, canComposeRequiredOnDate,
-    canComposeAdlOnDate, dailyLogAccessGate, reportClockGate, formatLogSubmittedAt, localYmd
+    canComposeAdlOnDate, dailyLogAccessGate, reportClockGate, formatLogSubmittedAt, adlCountOnDate, localYmd
   };`,
   sandbox
 );
@@ -35,7 +35,7 @@ const {
   missingRequiredLogTypes, nextRequiredLogType, eligibleWorkDates,
   canWriteDailyLogOnDate, punchWorkDatesForJob,
   applicableClockOutTime, requiredPeriodStatus, canComposeRequiredOnDate,
-  canComposeAdlOnDate, dailyLogAccessGate, reportClockGate, formatLogSubmittedAt,
+  canComposeAdlOnDate, dailyLogAccessGate, reportClockGate, formatLogSubmittedAt, adlCountOnDate,
 } = sandbox.module.exports;
 
 let failed = 0;
@@ -191,8 +191,25 @@ check('schema declares nullable work_date', () => {
   assert.ok(schemaSrc.includes('by_job_work_date'));
 });
 
+check('ADL and legacy OTHER count toward Home ADL scorecard', () => {
+  assert.strictEqual(adlCountOnDate([SAT_ADL]), 1);
+  assert.strictEqual(adlCountOnDate([SAT_ADL, { entry_type: 'OTHER', work_date: SAT }]), 2);
+  assert.strictEqual(adlCountOnDate([SAT_SOD_LATE, SAT_ADL]), 1);
+  assert.strictEqual(adlCountOnDate([SAT_SOD_LATE]), 0);
+});
+
 check('Time Clock still waits on required SOD/MOD/EOD/PRT', () => {
   assert.ok(timeClockSrc.includes('missingClockOutDuties'));
+});
+
+check('Home THIS WEEK has an ADL row under PRT; count is tappable', () => {
+  assert.ok(homeSrc.includes("PRT_DUTY.short, 'ADL'"));
+  assert.ok(homeSrc.includes('adlCountOnDate'));
+  assert.ok(homeSrc.includes('goWeekAdl'));
+  assert.ok(homeSrc.includes("logType: 'ADL'"));
+  assert.ok(homeSrc.includes('logDate: date'));
+  assert.ok(homeSrc.includes('weekAdlCount'));
+  assert.ok(!homeSrc.includes('weekAdlCount') || homeSrc.includes('color: C.teal'));
 });
 
 check('PRT still uses reportClockGate', () => {
