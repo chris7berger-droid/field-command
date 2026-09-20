@@ -263,7 +263,7 @@ const daily_log_entries = new Table(
     job_id:             column.integer,
     employee_id:        column.text,
 
-    // Type: SOD, MOD, EOD, or OTHER
+    // Type: SOD, MOD, EOD, ADL, or legacy OTHER
     entry_type:         column.text,
 
     // Photos — JSONB array of URLs
@@ -272,11 +272,14 @@ const daily_log_entries = new Table(
     // Notes — required
     notes:              column.text,
 
+    // Job/work calendar day. Nullable until phones that write it replace Build 8.
+    work_date:          column.text,
+
     // Sync
     synced:             column.integer, // boolean
     created_at:         column.text,
   },
-  { indexes: { by_job_date: ['job_id', 'created_at'] } }
+  { indexes: { by_job_date: ['job_id', 'created_at'], by_job_work_date: ['job_id', 'work_date'] } }
 );
 
 // assignments — Schedule crew days. Read-only. job_id is jobs.job_id

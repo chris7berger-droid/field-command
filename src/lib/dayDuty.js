@@ -122,6 +122,26 @@ export function reportClockGate(targetJobId, punches) {
   return { allowed: false, kind: 'none', openId: null };
 }
 
+/** Daily Log / ADL access. PRT keeps reportClockGate. */
+export function dailyLogAccessGate(targetJobId, punches, { eligible = false } = {}) {
+  if (!Array.isArray(punches)) return { allowed: true, openId: null, kind: 'unknown' };
+  const openId = openClockJobId(punches);
+  const target = String(targetJobId);
+  if (openId === target) return { allowed: true, openId, kind: 'clocked' };
+  if (openId) return { allowed: false, kind: 'other', openId };
+  if (eligible) return { allowed: true, openId: null, kind: 'eligible' };
+  return { allowed: false, kind: 'none', openId: null };
+}
+
+export function dailyLogAccessCopy(kind, openLabel) {
+  if (kind === 'other') return reportClockCopy('other', openLabel);
+  return {
+    title: 'No work day on this job to report.',
+    body: 'Daily Logs follow a day you were assigned or punched — not a new clock-in.',
+    confirm: 'OK',
+  };
+}
+
 export function reportClockCopy(kind, openLabel) {
   if (kind === 'other') {
     return {
