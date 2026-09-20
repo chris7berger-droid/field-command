@@ -44,6 +44,15 @@ function ymd(v) {
   return s.length >= 10 ? s.slice(0, 10) : null;
 }
 
+// Dated SOW days before local today: viewable, load-out checkbox read-only.
+export function isHistoricalSowWorkDate(workDate, todayYmd) {
+  return !!(workDate && todayYmd && workDate < todayYmd);
+}
+
+export function materialCheckMatchDate(workDate, todayYmd) {
+  return isHistoricalSowWorkDate(workDate, todayYmd) ? workDate : todayYmd;
+}
+
 function fmtHrs(n) {
   const v = Number(n);
   if (!Number.isFinite(v) || v <= 0) return null;
@@ -320,6 +329,7 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
   // Which material rows are expanded to show full specs (view state only).
   const [expandedMats, setExpandedMats] = useState(() => new Set());
   const currentDay = days[selectedDayIdx] || null;
+  const isHistoricalDay = isHistoricalSowWorkDate(currentDay?.date, today);
 
   // wtc_material_id → persisted check row ({ id, checked }).
   const checkByMat = useMemo(() => {
@@ -337,6 +347,7 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
   // Persist today's load-out. A check from another day must not look loaded
   // this morning — the office still has the row; the phone starts the day empty.
   const toggleCheck = async (mat) => {
+    if (isHistoricalSowWorkDate(currentDay?.date, today)) return;
     const matId = mat.wtc_material_id;
     if (!matId) return; // no stable id → cannot persist safely
     let actorId;
@@ -508,7 +519,8 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
                 {currentDay.materials.map((mat, idx) => {
                   const matKey = `${currentDay.key}:${mat.wtc_material_id || idx}`;
                   const checkRow = mat.wtc_material_id ? checkByMat.get(mat.wtc_material_id) : null;
-                  const checked = !!(checkRow && checkRow.checked && checkRow.check_date === today);
+                  const matchDate = materialCheckMatchDate(currentDay.date, today);
+                  const checked = !!(checkRow && checkRow.checked && checkRow.check_date === matchDate);
                   const expanded = expandedMats.has(matKey);
                   const qty = Number(mat.qty_planned) || 0;
                   // Full spec set — string values shown verbatim (mix_time etc. carry
@@ -527,8 +539,9 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
                         <TouchableOpacity
                           style={[styles.checkbox, checked && styles.checkboxOn]}
                           onPress={() => toggleCheck(mat)}
+                          disabled={isHistoricalDay}
                           hitSlop={{ top: 12, bottom: 12, left: 12, right: 6 }}
-                          activeOpacity={0.7}
+                          activeOpacity={isHistoricalDay ? 1 : 0.7}
                         >
                           {checked ? <Text style={styles.checkMark}>✓</Text> : null}
                         </TouchableOpacity>
