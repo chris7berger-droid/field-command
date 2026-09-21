@@ -48,9 +48,9 @@ answer those four. Full contract + open decisions:
 ## PowerSync Cloud
 - **Instance URL:** https://69d81f100e377e689729db98.powersync.journeyapps.com
 - **Dashboard:** dashboard.powersync.com, org chris7berger-droid, project Field Command
-- **Synced tables (12):** call_log, proposal_wtc, job_wtcs, team_members, job_crew, jobs, time_punches, daily_production_reports, daily_log_entries, job_material_checks, job_mobilizations, assignments. Live dashboard (2026-09-17): global `all_data` plus `parked_scheduled_call_log` so live Parked/Scheduled jobs deliver their `call_log` parent even when Sales stage is excluded. Assignments SELECT includes `team_member_id`. No per-user filtering. Publication unchanged.
+- **Synced tables (12):** call_log, proposal_wtc, job_wtcs, team_members, job_crew, jobs, time_punches, daily_production_reports, daily_log_entries, job_material_checks, job_mobilizations, assignments. Live dashboard (2026-09-21): Sync Streams edition 3, auto_subscribe. Tenant gate is `user_tenants` (`team_members.tenant_id` where `auth_id = auth.user_id()` AND `active`). `job_wtcs` / `job_mobilizations` follow `jobs.job_id`; `daily_log_entries` follows `call_log.id`. `parked_scheduled_call_log` still delivers Parked/Scheduled/Ongoing parents, tenant-filtered. Assignments SELECT includes `team_member_id`. Publication unchanged. Do not restore global `all_data`.
 - **Client Auth:** Supabase Auth with JWT secret
-- **Single-tenant** — global bucket, no per-user filtering yet
+- **Tenant-filtered sync** — Field downloads only the authenticated user's tenant; orphan/inactive membership gets an empty CTE. Still one live tenant (HDSP) today.
 
 ## Edge Functions
 - **upload-photo** — presigned URL for R2 upload, returns public dev URL

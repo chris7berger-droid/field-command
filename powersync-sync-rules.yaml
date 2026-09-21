@@ -1,45 +1,96 @@
-# PowerSync Sync Rules for Field Command
-# Currently deployed to Development instance via PowerSync Dashboard
+# PowerSync Sync Streams for Field Command
+# Deploy to the Development instance (Dashboard Sync Streams, or
+# `npx powersync deploy sync-config`). YAML is the artifact; dashboard is apply (MIG-9).
 #
-# Single-tenant global buckets — no per-user filtering yet.
-# TODO: Add crew-filtered buckets (admin_all + crew_assigned) once
-# per-crew job filtering is implemented in the app.
+# Tenant isolation: Field must only download the authenticated user's tenant.
+# Identity is team_members.tenant_id where auth_id = auth.user_id() AND active.
+# Orphan / inactive membership → empty user_tenants CTE → zero synced rows.
 #
-# VIS-1: Legacy Sync Rules cannot JOIN/subquery in a data query
-# (docs.powersync.com/sync/supported-sql — Sync Rules: "Not supported:
-# subqueries, JOINs, CTEs"). Schedule-driven call_log rows use a second
-# global bucket whose parameter query reads live Parked/Scheduled/Ongoing
-# jobs. Complete-only jobs stay out (Go Back is a later slice). Do not
-# pull the Sales-only historical book.
+# Edition 3 (Sync Streams) is required: Legacy Sync Rules cannot JOIN/subquery
+# (docs.powersync.com/sync/supported-sql). job_wtcs, job_mobilizations, and
+# daily_log_entries have no tenant_id column, so they must follow the parent
+# (jobs.job_id vs call_log.id) inside a stream query. Do not mix those parents.
+#
+# auto_subscribe: true — Field's existing db.connect() includes default streams
+# (SDK includeDefaultStreams defaults true). No client subscribe() change.
+#
+# Preserve current single-tenant behavior:
+# - Search All Jobs reads local SQLite jobs + call_log (all tenant jobs still sync)
+# - parked_scheduled_call_log still pulls Parked/Scheduled/Ongoing parents
+# - SELECT lists unchanged from the previous global rules
 
-bucket_definitions:
-  all_data:
-    data:
+config:
+  edition: 3
+
+with:
+  user_tenants: |
+    SELECT tenant_id
+      FROM team_members
+     WHERE auth_id = auth.user_id()
+       AND active = true
+
+streams:
+  tenant_data:
+    auto_subscribe: true
+    queries:
       - >-
         SELECT * FROM call_log
-        WHERE stage = 'Scheduled'
-        OR stage = 'In Progress'
-        OR stage = 'Parked'
-        OR stage = 'mobilized'
-        OR stage = 'in_progress'
-      - SELECT * FROM proposal_wtc
-      - SELECT * FROM job_wtcs
-      - SELECT * FROM team_members
-      - SELECT * FROM job_crew
-      - SELECT job_id AS id, * FROM jobs
-      - SELECT * FROM time_punches
-      - SELECT * FROM daily_production_reports
-      - SELECT * FROM daily_log_entries
-      - SELECT * FROM job_material_checks
-      - SELECT id, job_id, seq, label, start_date, end_date FROM job_mobilizations
-      - SELECT id, job_id, crew_name, date, mobilization_id, team_member_id FROM assignments
+        WHERE tenant_id IN user_tenants
+        AND (
+          stage = 'Scheduled'
+          OR stage = 'In Progress'
+          OR stage = 'Parked'
+          OR stage = 'mobilized'
+          OR stage = 'in_progress'
+        )
+      - SELECT * FROM proposal_wtc WHERE tenant_id IN user_tenants
+      - SELECT * FROM team_members WHERE tenant_id IN user_tenants
+      - SELECT * FROM job_crew WHERE tenant_id IN user_tenants
+      - SELECT job_id AS id, * FROM jobs WHERE tenant_id IN user_tenants
+      - SELECT * FROM time_punches WHERE tenant_id IN user_tenants
+      - SELECT * FROM daily_production_reports WHERE tenant_id IN user_tenants
+      - SELECT * FROM job_material_checks WHERE tenant_id IN user_tenants
+      - SELECT id, job_id, crew_name, date, mobilization_id, team_member_id FROM assignments WHERE tenant_id IN user_tenants
 
+  # Children of jobs.job_id (NOT call_log.id)
+  job_children:
+    auto_subscribe: true
+    queries:
+      - |
+        SELECT * FROM job_wtcs
+         WHERE job_id IN (
+           SELECT job_id FROM jobs WHERE tenant_id IN user_tenants
+         )
+      - |
+        SELECT id, job_id, seq, label, start_date, end_date
+          FROM job_mobilizations
+         WHERE job_id IN (
+           SELECT job_id FROM jobs WHERE tenant_id IN user_tenants
+         )
+
+  # Children of call_log.id (Field jobId / daily_log.job_id — NOT jobs.job_id)
+  call_log_children:
+    auto_subscribe: true
+    queries:
+      - |
+        SELECT * FROM daily_log_entries
+         WHERE job_id IN (
+           SELECT id FROM call_log WHERE tenant_id IN user_tenants
+         )
+
+  # Live Parked/Scheduled/Ongoing Schedule parents, even when Sales stage is
+  # outside the tenant_data call_log filter. Tenant gate is in the query
+  # (do not add a unused tenant_id output column).
   parked_scheduled_call_log:
-    parameters: |
-      SELECT call_log_id
-        FROM jobs
-       WHERE (deleted IS NULL OR deleted = 'No')
-         AND (status = 'Parked' OR status = 'Scheduled' OR status = 'Ongoing')
-         AND call_log_id IS NOT NULL
-    data:
-      - SELECT * FROM call_log WHERE id = bucket.call_log_id
+    auto_subscribe: true
+    queries:
+      - |
+        SELECT * FROM call_log
+         WHERE tenant_id IN user_tenants
+           AND id IN (
+             SELECT call_log_id
+               FROM jobs
+              WHERE (deleted IS NULL OR deleted = 'No')
+                AND (status = 'Parked' OR status = 'Scheduled' OR status = 'Ongoing')
+                AND call_log_id IS NOT NULL
+           )
