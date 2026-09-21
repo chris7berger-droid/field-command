@@ -510,7 +510,7 @@ export default function ReportTab({ jobId, employeeId, employeeName, jobName, na
     if (status !== 'granted') { Alert.alert('Permission needed', 'Photo library access is required.'); return; }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      quality: 0.7,
+      quality: 1,
       allowsMultipleSelection: true,
       selectionLimit: 0,
       orderedSelection: true,
