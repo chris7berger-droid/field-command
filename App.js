@@ -35,6 +35,7 @@ import { supabase } from './src/lib/supabase';
 import { getPowerSync, connectPowerSync } from './src/lib/powersync';
 import { evaluateFieldActivation } from './src/lib/activation';
 import PunchStatusBar from './src/components/PunchStatusBar';
+import RefreshControl from './src/components/RefreshControl';
 import LoginScreen from './src/screens/LoginScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import JobListScreen from './src/screens/JobListScreen';
@@ -202,6 +203,9 @@ export default function App() {
     <PowerSyncContext.Provider value={db}>
       <View style={styles.appWrap}>
         <View style={styles.safeTop} />
+        <View style={styles.refreshChrome}>
+          <RefreshControl />
+        </View>
         <PunchStatusBar />
         <NavigationContainer>
           <Stack.Navigator
@@ -265,6 +269,14 @@ const styles = StyleSheet.create({
   safeTop: {
     height: Platform.OS === 'ios' ? 50 : 30,
     backgroundColor: C.dark,
+  },
+  refreshChrome: {
+    backgroundColor: C.dark,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingHorizontal: S.md,
+    paddingBottom: 4,
   },
   loading: {
     flex: 1,

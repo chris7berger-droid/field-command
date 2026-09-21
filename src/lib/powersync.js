@@ -6,6 +6,7 @@ import { PowerSyncDatabase } from '@powersync/react-native';
 import { OPSqliteOpenFactory } from '@powersync/op-sqlite';
 import { AppSchema } from './schema';
 import { SupabaseConnector } from './connector';
+import { runManualRefresh, waitForPostTapCheckpoint } from './manualRefresh';
 
 let _db = null;
 let _connector = null;
@@ -39,6 +40,22 @@ export async function connectPowerSync() {
   const connector = getConnector();
   await db.connect(connector);
   return db;
+}
+
+/**
+ * Crew-triggered check-now. Reuses connect() so the SDK starts a new
+ * streaming session and checkpoint comparison. Does not clear local data.
+ * connect() resolving is not success — wait for a post-tap checkpoint.
+ */
+export async function refreshPowerSync(options = {}) {
+  const db = getPowerSync();
+  const connector = getConnector();
+  return runManualRefresh({
+    connect: () => db.connect(connector),
+    wait: (startedAt, waitOptions) => waitForPostTapCheckpoint(db, startedAt, waitOptions),
+    timeoutMs: options.timeoutMs,
+    signal: options.signal,
+  });
 }
 
 /**
