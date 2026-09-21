@@ -54,6 +54,12 @@ export function refreshOutcome(waitResult) {
   return waitResult?.complete ? 'updated' : 'noSignal';
 }
 
+/** null → caller must not touch Refresh UI (unmount / session loss). */
+export function phaseAfterRefreshResult(result, signal) {
+  if (signal?.aborted) return null;
+  return result?.outcome === 'updated' ? REFRESH_PHASE.updated : REFRESH_PHASE.noSignal;
+}
+
 export async function waitForStatusMatch(db, predicate, options = {}) {
   const timeoutMs = options.timeoutMs ?? REFRESH_TIMEOUT_MS;
   const outer = options.signal;
@@ -121,19 +127,35 @@ function withTimeout(promise, signal) {
   });
 }
 
+function abortedResult(startedAt, timedOut = false) {
+  return {
+    startedAt,
+    complete: false,
+    timedOut,
+    outcome: 'noSignal',
+    usedConnect: false,
+    aborted: true,
+  };
+}
+
 /**
  * Connected live stream → UPDATED without reconnect.
  * Downloading live stream → wait until download settles.
- * Disconnected → connect(), whole-operation timeout, then post-tap checkpoint.
+ * SDK already connecting, no shared JS connect → wait, do not call connect().
+ * Disconnected → shared connectPowerSync(), whole-operation timeout, then
+ * post-tap checkpoint. connect() resolving is not UPDATED.
  */
 export async function runManualRefresh({
   getStatus,
   connect,
   wait,
+  isConnectInFlight,
   startedAt = Date.now(),
   timeoutMs = REFRESH_TIMEOUT_MS,
   signal,
 } = {}) {
+  if (signal?.aborted) return abortedResult(startedAt);
+
   const status = typeof getStatus === 'function' ? getStatus() : null;
 
   if (status?.connected) {
@@ -160,6 +182,23 @@ export async function runManualRefresh({
     };
   }
 
+  const sharedInFlight = typeof isConnectInFlight === 'function' && isConnectInFlight();
+  // SDK retrying on its own — calling connect() would tear that stream down.
+  if (status?.connecting && !sharedInFlight) {
+    const waitResult = await wait(startedAt, {
+      timeoutMs,
+      signal,
+      predicate: (s) => isPostTapCheckpointComplete(s, startedAt),
+    });
+    return {
+      startedAt,
+      complete: !!waitResult.complete,
+      timedOut: !!waitResult.timedOut,
+      outcome: refreshOutcome(waitResult),
+      usedConnect: false,
+    };
+  }
+
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -173,6 +212,10 @@ export async function runManualRefresh({
   }
 
   try {
+    if (controller.signal.aborted) {
+      return abortedResult(startedAt, timedOut);
+    }
+
     const connectResult = await withTimeout(connect(), controller.signal);
     if (connectResult.kind === 'abort') {
       return {
@@ -181,6 +224,7 @@ export async function runManualRefresh({
         timedOut,
         outcome: 'noSignal',
         usedConnect: true,
+        aborted: !timedOut,
       };
     }
     if (connectResult.kind === 'failed') {
@@ -198,9 +242,10 @@ export async function runManualRefresh({
       return {
         startedAt,
         complete: false,
-        timedOut: true,
+        timedOut: timedOut || remaining === 0,
         outcome: 'noSignal',
         usedConnect: true,
+        aborted: controller.signal.aborted && !timedOut,
       };
     }
 

@@ -11,28 +11,47 @@ import {
   REFRESH_PHASE,
   refreshLabel,
   createRefreshInFlightGuard,
+  phaseAfterRefreshResult,
 } from '../lib/manualRefresh';
 
-export default function RefreshControl() {
+export default function RefreshControl({ active = true }) {
   const [phase, setPhase] = useState(REFRESH_PHASE.idle);
   const guardRef = useRef(createRefreshInFlightGuard());
   const holdRef = useRef(null);
+  const abortRef = useRef(new AbortController());
 
-  useEffect(() => () => {
-    if (holdRef.current) clearTimeout(holdRef.current);
-  }, []);
+  useEffect(() => {
+    if (!active) {
+      abortRef.current.abort();
+      if (holdRef.current) clearTimeout(holdRef.current);
+      return undefined;
+    }
+    if (abortRef.current.signal.aborted) {
+      abortRef.current = new AbortController();
+    }
+    const controller = abortRef.current;
+    return () => {
+      controller.abort();
+      if (holdRef.current) clearTimeout(holdRef.current);
+    };
+  }, [active]);
 
   const onPress = useCallback(async () => {
     if (!guardRef.current.tryBegin()) return;
     if (holdRef.current) clearTimeout(holdRef.current);
+    const signal = abortRef.current.signal;
     setPhase(REFRESH_PHASE.refreshing);
     try {
-      const result = await refreshPowerSync();
-      setPhase(result.outcome === 'updated' ? REFRESH_PHASE.updated : REFRESH_PHASE.noSignal);
+      const result = await refreshPowerSync({ signal });
+      const next = phaseAfterRefreshResult(result, signal);
+      if (!next) return;
+      setPhase(next);
     } catch {
+      if (signal.aborted) return;
       setPhase(REFRESH_PHASE.noSignal);
     } finally {
       guardRef.current.end();
+      if (signal.aborted) return;
       holdRef.current = setTimeout(() => setPhase(REFRESH_PHASE.idle), UPDATED_HOLD_MS);
     }
   }, []);

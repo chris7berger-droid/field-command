@@ -1,41 +1,49 @@
 #!/usr/bin/env node
 /**
  * Manual Refresh — live connected path, download wait, disconnected reconnect,
- * whole-operation timeout, no disconnectAndClear, in-flight guard.
+ * connecting wait (no competing connect), abort, shared coalescer, no disconnectAndClear.
  */
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const libPath = path.join(__dirname, '../src/lib/manualRefresh.js');
-const src = fs.readFileSync(libPath, 'utf8').replace(/^export /gm, '');
-const sandbox = { module: { exports: {} }, exports: {}, console, AbortController, setTimeout, clearTimeout };
-vm.runInNewContext(
-  `${src}\nmodule.exports = {
-    isLiveCurrent,
-    isPostTapCheckpointComplete,
-    refreshOutcome,
-    waitForStatusMatch,
-    waitForPostTapCheckpoint,
-    runManualRefresh,
-    createRefreshInFlightGuard,
-    REFRESH_LABEL,
-    refreshLabel,
-  };`,
-  sandbox
-);
+function loadModule(relPath, exportNames) {
+  const src = fs.readFileSync(path.join(__dirname, relPath), 'utf8').replace(/^export /gm, '');
+  const sandbox = { module: { exports: {} }, exports: {}, console, AbortController, setTimeout, clearTimeout };
+  vm.runInNewContext(`${src}\nmodule.exports = { ${exportNames.join(', ')} };`, sandbox);
+  return sandbox.module.exports;
+}
+
 const {
   isLiveCurrent,
   isPostTapCheckpointComplete,
   refreshOutcome,
+  phaseAfterRefreshResult,
   waitForStatusMatch,
   waitForPostTapCheckpoint,
   runManualRefresh,
   createRefreshInFlightGuard,
   REFRESH_LABEL,
+  REFRESH_PHASE,
   refreshLabel,
-} = sandbox.module.exports;
+} = loadModule('../src/lib/manualRefresh.js', [
+  'isLiveCurrent',
+  'isPostTapCheckpointComplete',
+  'refreshOutcome',
+  'phaseAfterRefreshResult',
+  'waitForStatusMatch',
+  'waitForPostTapCheckpoint',
+  'runManualRefresh',
+  'createRefreshInFlightGuard',
+  'REFRESH_LABEL',
+  'REFRESH_PHASE',
+  'refreshLabel',
+]);
+
+const { createConnectCoalescer } = loadModule('../src/lib/powerSyncLifecycle.js', [
+  'createConnectCoalescer',
+]);
 
 const powersyncSrc = fs.readFileSync(path.join(__dirname, '../src/lib/powersync.js'), 'utf8');
 const appSrc = fs.readFileSync(path.join(__dirname, '../App.js'), 'utf8');
@@ -66,6 +74,7 @@ function check(name, fn) {
 function makeStatus(overrides = {}) {
   return {
     connected: false,
+    connecting: false,
     hasSynced: false,
     dataFlowStatus: { downloading: false },
     lastSyncedAt: undefined,
@@ -108,7 +117,7 @@ function makeFakeDb(initial) {
 }
 
 function neverConnect() {
-  throw new Error('must not reconnect a healthy live stream');
+  throw new Error('must not start another connect()');
 }
 
 async function run() {
@@ -312,6 +321,113 @@ async function run() {
     assert.strictEqual(result.complete, false);
   });
 
+  await check('connecting=true does not call another connect', async () => {
+    const startedAt = Date.now();
+    const db = makeFakeDb(makeStatus({ connecting: true }));
+    let connectedCalls = 0;
+    const pending = runManualRefresh({
+      startedAt,
+      getStatus: () => db.currentStatus,
+      isConnectInFlight: () => false,
+      connect: async () => {
+        connectedCalls += 1;
+        neverConnect();
+      },
+      wait: (at, opts) => waitForPostTapCheckpoint(db, at, opts),
+      timeoutMs: 400,
+    });
+    setTimeout(() => {
+      db.setStatus(makeStatus({
+        connected: true,
+        lastSyncedAt: new Date(startedAt + 5),
+      }));
+    }, 15);
+    const result = await pending;
+    assert.strictEqual(connectedCalls, 0);
+    assert.strictEqual(result.usedConnect, false);
+    assert.strictEqual(result.outcome, 'updated');
+  });
+
+  await check('timeout while connecting is NO SIGNAL without a competing connect', async () => {
+    const db = makeFakeDb(makeStatus({ connecting: true }));
+    let connectedCalls = 0;
+    const result = await runManualRefresh({
+      getStatus: () => db.currentStatus,
+      isConnectInFlight: () => false,
+      connect: async () => {
+        connectedCalls += 1;
+        neverConnect();
+      },
+      wait: (at, opts) => waitForPostTapCheckpoint(db, at, opts),
+      timeoutMs: 40,
+    });
+    assert.strictEqual(connectedCalls, 0);
+    assert.strictEqual(result.usedConnect, false);
+    assert.strictEqual(result.outcome, 'noSignal');
+    assert.strictEqual(result.timedOut, true);
+  });
+
+  await check('lifecycle owner + Refresh share one coalesced connect', async () => {
+    let starts = 0;
+    const coalescer = createConnectCoalescer(() => {
+      starts += 1;
+      return new Promise(() => {});
+    });
+    coalescer.connect();
+    const result = await runManualRefresh({
+      getStatus: () => makeStatus({ connected: false }),
+      connect: () => coalescer.connect(),
+      isConnectInFlight: () => coalescer.isInFlight(),
+      wait: async () => {
+        throw new Error('wait must not run after connect timeout');
+      },
+      timeoutMs: 40,
+    });
+    assert.strictEqual(starts, 1);
+    assert.strictEqual(coalescer.isInFlight(), true);
+    assert.strictEqual(result.outcome, 'noSignal');
+    assert.strictEqual(result.timedOut, true);
+    assert.strictEqual(result.usedConnect, true);
+  });
+
+  await check('aborted Refresh does not start connect', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let connectedCalls = 0;
+    const result = await runManualRefresh({
+      getStatus: () => makeStatus({ connected: false }),
+      connect: async () => {
+        connectedCalls += 1;
+        neverConnect();
+      },
+      wait: async () => {
+        throw new Error('wait must not run after abort');
+      },
+      signal: controller.signal,
+    });
+    assert.strictEqual(connectedCalls, 0);
+    assert.strictEqual(result.usedConnect, false);
+    assert.strictEqual(result.outcome, 'noSignal');
+    assert.strictEqual(result.aborted, true);
+  });
+
+  await check('late UPDATED after abort does not apply to Refresh UI', () => {
+    const controller = new AbortController();
+    controller.abort();
+    assert.strictEqual(
+      phaseAfterRefreshResult({ outcome: 'updated' }, controller.signal),
+      null
+    );
+    assert.strictEqual(
+      phaseAfterRefreshResult({ outcome: 'updated' }, { aborted: false }),
+      REFRESH_PHASE.updated
+    );
+    assert.strictEqual(
+      phaseAfterRefreshResult({ outcome: 'noSignal' }, { aborted: false }),
+      REFRESH_PHASE.noSignal
+    );
+  });
+
   await check('in-flight guard ignores a second tap', () => {
     const g = createRefreshInFlightGuard();
     assert.strictEqual(g.tryBegin(), true);
@@ -322,14 +438,17 @@ async function run() {
     assert.strictEqual(g.tryBegin(), true);
   });
 
-  await check('refreshPowerSync never calls disconnectAndClear', () => {
+  await check('refreshPowerSync uses connectPowerSync, never raw db.connect or disconnectAndClear', () => {
     const refreshFn = powersyncSrc.slice(
       powersyncSrc.indexOf('export async function refreshPowerSync'),
       powersyncSrc.indexOf('export async function disconnectPowerSync')
     );
     assert.ok(refreshFn.includes('getStatus: () => db.currentStatus'));
-    assert.ok(refreshFn.includes('db.connect(connector)'));
+    assert.ok(refreshFn.includes('connect: connectPowerSync'));
+    assert.ok(refreshFn.includes('isConnectInFlight: isPowerSyncConnectInFlight'));
+    assert.ok(!refreshFn.includes('db.connect'));
     assert.ok(!refreshFn.includes('disconnectAndClear'));
+    assert.ok(powersyncSrc.includes('createConnectCoalescer'));
     const onlyClear = powersyncSrc.match(/disconnectAndClear/g) || [];
     assert.strictEqual(onlyClear.length, 1);
     const clearAt = powersyncSrc.indexOf('disconnectAndClear');
@@ -337,19 +456,23 @@ async function run() {
     assert.ok(clearAt > disconnectFnAt, 'disconnectAndClear stays only on sign-out helper');
   });
 
-  await check('UI is a pill and does not use useQuery().refresh', () => {
+  await check('UI aborts on unmount/session loss and ignores late results', () => {
     assert.ok(!controlSrc.includes('useQuery'));
-    assert.ok(controlSrc.includes('refreshPowerSync'));
+    assert.ok(controlSrc.includes('refreshPowerSync({ signal })'));
+    assert.ok(controlSrc.includes('AbortController'));
+    assert.ok(controlSrc.includes('controller.abort()') || controlSrc.includes('.abort()'));
+    assert.ok(controlSrc.includes('active'));
+    assert.ok(controlSrc.includes('phaseAfterRefreshResult'));
+    assert.ok(controlSrc.includes('if (!next) return'));
+    assert.ok(controlSrc.includes('if (signal.aborted) return'));
     assert.ok(controlSrc.includes('styles.pill'));
-    assert.ok(controlSrc.includes('borderRadius: 6'));
-    assert.ok(controlSrc.includes("result.outcome === 'updated'"));
     assert.ok(controlSrc.includes('tryBegin()'));
     assert.ok(controlSrc.includes('disabled={busy}'));
   });
 
   await check('Refresh is a shell sibling, PunchStatusBar punch logic untouched', () => {
     assert.ok(appSrc.includes("import RefreshControl from './src/components/RefreshControl'"));
-    assert.ok(appSrc.includes('<RefreshControl />'));
+    assert.ok(appSrc.includes('<RefreshControl active={canConnect} />'));
     assert.ok(appSrc.includes('<PunchStatusBar />'));
     assert.ok(!punchSrc.includes('refreshPowerSync'));
     assert.ok(!punchSrc.includes('REFRESH'));

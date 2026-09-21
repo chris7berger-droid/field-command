@@ -11,10 +11,17 @@ import {
   waitForStatusMatch,
   isPostTapCheckpointComplete,
 } from './manualRefresh';
+import { createConnectCoalescer } from './powerSyncLifecycle';
 
 let _db = null;
 let _connector = null;
-let _connectInFlight = null;
+
+const _connect = createConnectCoalescer(async () => {
+  const db = getPowerSync();
+  const connector = getConnector();
+  await db.connect(connector);
+  return db;
+});
 
 export function getPowerSync() {
   if (!_db) {
@@ -40,30 +47,27 @@ export function getConnector() {
 /**
  * Call after successful auth to start syncing.
  * Concurrent callers share one in-flight db.connect() — the SDK tears down
- * the stream on every connect(), so App.js must not overlap those calls.
+ * the stream on every connect(), so App.js and Refresh must not overlap those calls.
  */
 export async function connectPowerSync() {
-  if (_connectInFlight) return _connectInFlight;
-  const db = getPowerSync();
-  const connector = getConnector();
-  _connectInFlight = db.connect(connector)
-    .then(() => db)
-    .finally(() => {
-      _connectInFlight = null;
-    });
-  return _connectInFlight;
+  return _connect.connect();
+}
+
+export function isPowerSyncConnectInFlight() {
+  return _connect.isInFlight();
 }
 
 /**
  * Crew-triggered check-now. A healthy live stream is not torn down.
- * Reconnect only when disconnected. connect() resolving is not UPDATED.
+ * Reconnect only when disconnected, and only through connectPowerSync().
+ * connect() resolving is not UPDATED.
  */
 export async function refreshPowerSync(options = {}) {
   const db = getPowerSync();
-  const connector = getConnector();
   return runManualRefresh({
     getStatus: () => db.currentStatus,
-    connect: () => db.connect(connector),
+    connect: connectPowerSync,
+    isConnectInFlight: isPowerSyncConnectInFlight,
     wait: (startedAt, waitOptions) => waitForStatusMatch(
       db,
       waitOptions.predicate || ((s) => isPostTapCheckpointComplete(s, startedAt)),

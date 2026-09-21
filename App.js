@@ -35,8 +35,8 @@ import { C, F, S } from './src/lib/tokens';
 import { supabase } from './src/lib/supabase';
 import { getPowerSync, connectPowerSync } from './src/lib/powersync';
 import {
-  shouldEnsurePowerSyncConnect,
-  POWERSYNC_ENSURE_COOLDOWN_MS,
+  nextEnsureAction,
+  afterConnectAttempt,
 } from './src/lib/powerSyncLifecycle';
 import { evaluateFieldActivation } from './src/lib/activation';
 import PunchStatusBar from './src/components/PunchStatusBar';
@@ -91,8 +91,14 @@ export default function App() {
     let cooldownUntil = 0;
     let wakeup = null;
 
+    const clearWakeup = () => {
+      if (!wakeup) return;
+      clearTimeout(wakeup);
+      wakeup = null;
+    };
+
     const scheduleWakeup = (delayMs) => {
-      if (cancelled || wakeup) return;
+      if (cancelled || wakeup || delayMs == null) return;
       wakeup = setTimeout(() => {
         wakeup = null;
         ensure();
@@ -101,24 +107,33 @@ export default function App() {
 
     const ensure = () => {
       if (cancelled) return;
-      if (!shouldEnsurePowerSyncConnect(db.currentStatus, {
+      const status = db.currentStatus;
+      const action = nextEnsureAction(status, {
         inFlight,
         cooldownUntil,
         now: Date.now(),
-      })) return;
+      });
+      if (action.type === 'wakeup') {
+        scheduleWakeup(action.delayMs);
+        return;
+      }
+      if (action.type !== 'connect') {
+        if (status?.connected || status?.connecting) {
+          clearWakeup();
+          cooldownUntil = 0;
+        }
+        return;
+      }
+      clearWakeup();
       inFlight = true;
       connectPowerSync()
         .catch(console.error)
         .finally(() => {
           inFlight = false;
           if (cancelled) return;
-          const status = db.currentStatus;
-          if (status?.connected) {
-            cooldownUntil = 0;
-            return;
-          }
-          cooldownUntil = Date.now() + POWERSYNC_ENSURE_COOLDOWN_MS;
-          scheduleWakeup(POWERSYNC_ENSURE_COOLDOWN_MS);
+          const after = afterConnectAttempt(db.currentStatus, { now: Date.now() });
+          cooldownUntil = after.cooldownUntil;
+          scheduleWakeup(after.wakeupDelayMs);
         });
     };
 
@@ -258,7 +273,7 @@ export default function App() {
       <View style={styles.appWrap}>
         <View style={styles.safeTop} />
         <View style={styles.refreshChrome}>
-          <RefreshControl />
+          <RefreshControl active={canConnect} />
         </View>
         <PunchStatusBar />
         <NavigationContainer>
