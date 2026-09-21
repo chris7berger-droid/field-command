@@ -70,6 +70,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
   const [weather, setWeather] = useState(null);
   const [demoMode, setDemoMode] = useState(false);
   const [demoOnSite, setDemoOnSite] = useState(true);
+  const demoActive = __DEV__ && demoMode;
   const [showGeofenceModal, setShowGeofenceModal] = useState(false);
   const [showClockOutModal, setShowClockOutModal] = useState(false);
 
@@ -195,7 +196,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
   // ── Lunch countdown ───────────────────────────────────
   useEffect(() => {
     if (!isOnLunch || !lunchStart) { setLunchRemaining(0); return; }
-    const duration = demoMode ? LUNCH_DURATION_DEMO_MS : LUNCH_DURATION_MS;
+    const duration = demoActive ? LUNCH_DURATION_DEMO_MS : LUNCH_DURATION_MS;
     const tick = () => {
       const elapsed = Date.now() - lunchStart.getTime();
       const remaining = Math.max(0, duration - elapsed);
@@ -205,7 +206,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     tick();
     lunchTimerRef.current = setInterval(tick, 1000);
     return () => clearInterval(lunchTimerRef.current);
-  }, [isOnLunch, lunchStart, demoMode]);
+  }, [isOnLunch, lunchStart, demoActive]);
 
   const lunchMin = Math.floor(lunchRemaining / 60000);
   const lunchSec = Math.floor((lunchRemaining % 60000) / 1000);
@@ -215,7 +216,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
   const checkGPS = useCallback(async () => {
     if (!job) return { onSite: true, position: null, weatherData: null };
     let position;
-    if (demoMode) {
+    if (demoActive) {
       position = demoOnSite ? DEMO_POSITIONS.onSite : DEMO_POSITIONS.offSite;
     } else {
       position = await getCurrentPosition(); // throws if denied
@@ -225,7 +226,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     const weatherData = await fetchWeather(position.latitude, position.longitude);
     if (weatherData) setWeather(weatherData);
     return { onSite: geo.onSite, position, weatherData };
-  }, [job, demoMode, demoOnSite]);
+  }, [job, demoActive, demoOnSite]);
 
   // ── Write punch ───────────────────────────────────────
   const writePunch = useCallback(async (type, position, weatherData, gpsOverride = false) => {
@@ -314,7 +315,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
       let onSite = true;
       try {
         if (job) {
-          if (demoMode) {
+          if (demoActive) {
             position = demoOnSite ? DEMO_POSITIONS.onSite : DEMO_POSITIONS.offSite;
           } else {
             position = await getClockInPosition();
@@ -406,7 +407,7 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
     if (currentStep.punch === 'lunch_start') setLunchStart(new Date());
     Vibration.vibrate(100);
     advanceStep();
-  }, [currentStep, checkGPS, writePunch, advanceStep, prtSubmitted, todayLogs, allTodayPunches, otherJobRows, jobId, job, demoMode, demoOnSite, db, navigation, handleWriteError, clockInSubmitGuard, releaseClockInSubmit, clockOutSubmitGuard, releaseClockOutSubmit]);
+  }, [currentStep, checkGPS, writePunch, advanceStep, prtSubmitted, todayLogs, allTodayPunches, otherJobRows, jobId, job, demoActive, demoOnSite, db, navigation, handleWriteError, clockInSubmitGuard, releaseClockInSubmit, clockOutSubmitGuard, releaseClockOutSubmit]);
 
   // ── Confirm clock out ─────────────────────────────────
   const confirmClockOut = useCallback(async () => {
@@ -499,11 +500,13 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
             <Text style={styles.choiceBtnAltSub}>Standard clock in/out</Text>
           </TouchableOpacity>
         </View>
-        <View style={styles.demoSection}>
-          <TouchableOpacity style={[styles.demoToggle, demoMode && styles.demoToggleActive]} onPress={() => setDemoMode((d) => !d)}>
-            <Text style={demoMode ? styles.demoToggleTextActive : styles.demoToggleText}>{demoMode ? 'DEMO MODE ON' : 'DEMO MODE'}</Text>
-          </TouchableOpacity>
-        </View>
+        {__DEV__ ? (
+          <View style={styles.demoSection}>
+            <TouchableOpacity style={[styles.demoToggle, demoMode && styles.demoToggleActive]} onPress={() => setDemoMode((d) => !d)}>
+              <Text style={demoMode ? styles.demoToggleTextActive : styles.demoToggleText}>{demoMode ? 'DEMO MODE ON' : 'DEMO MODE'}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
       </LinenBackground>
     );
   }
@@ -623,17 +626,18 @@ export default function TimeClockTab({ jobId, jobName, employeeId, navigation })
         </View>
       )}
 
-      {/* Demo Toggle */}
-      <View style={styles.demoSection}>
-        <TouchableOpacity style={[styles.demoToggle, demoMode && styles.demoToggleActive]} onPress={() => setDemoMode((d) => !d)}>
-          <Text style={demoMode ? styles.demoToggleTextActive : styles.demoToggleText}>{demoMode ? 'DEMO MODE ON' : 'DEMO MODE'}</Text>
-        </TouchableOpacity>
-        {demoMode && (
-          <TouchableOpacity style={styles.demoGpsToggle} onPress={() => setDemoOnSite((s) => !s)}>
-            <Text style={styles.demoGpsText}>Simulate: {demoOnSite ? 'On Site' : 'Off Site'}</Text>
+      {__DEV__ ? (
+        <View style={styles.demoSection}>
+          <TouchableOpacity style={[styles.demoToggle, demoMode && styles.demoToggleActive]} onPress={() => setDemoMode((d) => !d)}>
+            <Text style={demoMode ? styles.demoToggleTextActive : styles.demoToggleText}>{demoMode ? 'DEMO MODE ON' : 'DEMO MODE'}</Text>
           </TouchableOpacity>
-        )}
-      </View>
+          {demoMode && (
+            <TouchableOpacity style={styles.demoGpsToggle} onPress={() => setDemoOnSite((s) => !s)}>
+              <Text style={styles.demoGpsText}>Simulate: {demoOnSite ? 'On Site' : 'Off Site'}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      ) : null}
 
       {/* Geofence Modal */}
       <Modal visible={showGeofenceModal} transparent animationType="fade" onRequestClose={() => { setShowGeofenceModal(false); pendingAction.current = null; releaseClockInSubmit(); }}>
