@@ -3,7 +3,7 @@
  * Lock codes / gate access are not on the job yet, so this page does
  * not invent them.
  */
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -16,7 +16,6 @@ import {
 } from 'react-native';
 import { useQuery } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
-import { getCurrentPosition } from '../lib/location';
 import JobSubHeader from '../components/JobSubHeader';
 import LinenBackground from '../components/LinenBackground';
 
@@ -45,29 +44,17 @@ function destParam(dest) {
   return encodeURIComponent(dest.q);
 }
 
-function directionsUrl(dest, origin) {
+function directionsUrl(dest) {
   const daddr = destParam(dest);
   if (Platform.OS === 'ios') {
-    if (origin) {
-      return `http://maps.apple.com/?saddr=${origin.latitude},${origin.longitude}&daddr=${daddr}&dirflg=d`;
-    }
     return `http://maps.apple.com/?saddr=Current+Location&daddr=${daddr}&dirflg=d`;
-  }
-  if (origin) {
-    return `https://www.google.com/maps/dir/?api=1&origin=${origin.latitude},${origin.longitude}&destination=${daddr}&travelmode=driving`;
   }
   return `https://www.google.com/maps/dir/?api=1&destination=${daddr}&travelmode=driving`;
 }
 
 async function openDirections(dest) {
-  let origin = null;
   try {
-    origin = await getCurrentPosition();
-  } catch {
-    // Location denied or unavailable — Maps can still open the jobsite.
-  }
-  try {
-    await Linking.openURL(directionsUrl(dest, origin));
+    await Linking.openURL(directionsUrl(dest));
   } catch {
     Alert.alert('Maps', 'Could not open Maps on this phone.');
   }
@@ -75,7 +62,6 @@ async function openDirections(dest) {
 
 export default function JobSiteScreen({ route, navigation }) {
   const { jobId } = route.params;
-  const [opening, setOpening] = useState(false);
   const { data: rows } = useQuery(
     `SELECT jobsite_address, jobsite_city, jobsite_state, jobsite_zip,
             jobsite_latitude, jobsite_longitude
@@ -110,17 +96,11 @@ export default function JobSiteScreen({ route, navigation }) {
             <TouchableOpacity
               style={styles.btn}
               activeOpacity={0.7}
-              disabled={opening}
-              onPress={async () => {
-                setOpening(true);
-                try {
-                  await openDirections(dest);
-                } finally {
-                  setOpening(false);
-                }
+              onPress={() => {
+                openDirections(dest);
               }}
             >
-              <Text style={styles.btnText}>{opening ? 'GETTING LOCATION…' : 'GET DIRECTIONS'}</Text>
+              <Text style={styles.btnText}>GET DIRECTIONS</Text>
             </TouchableOpacity>
           ) : null}
         </ScrollView>
