@@ -170,6 +170,17 @@ function ReportsGateCard({ copy, onConfirm }) {
   );
 }
 
+/** Historical thumbs wait one frame so date/type/notes/time paint first. */
+function HistoricalLogPhoto({ uri }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, [uri]);
+  if (!mounted) return <View style={[styles.logPhotoThumb, styles.logPhotoPlaceholder]} />;
+  return <Image source={{ uri }} style={styles.logPhotoThumb} />;
+}
+
 export default function ReportTab({ jobId, employeeId, employeeName, jobName, navigation, initialSection, initialLogType, initialLogDate }) {
   const db = usePowerSync();
   const today = tod();
@@ -859,7 +870,7 @@ export default function ReportTab({ jobId, employeeId, employeeName, jobName, na
             {visibleLogEntries.length > 0 && (
               <View style={styles.logHistory}>
                 {visibleLogEntries.map((entry) => {
-                  const photos = parseJSON(entry.photos, []);
+                  const photos = parseJSONArray(entry.photos, []);
                   return (
                     <View key={entry.id} style={styles.logEntryCard}>
                       <View style={styles.logEntryHeader}>
@@ -869,7 +880,9 @@ export default function ReportTab({ jobId, employeeId, employeeName, jobName, na
                       {photos.length > 0 && (
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.logPhotoScroll}>
                           {photos.map((uri, i) => (
-                            <Image key={i} source={{ uri }} style={styles.logPhotoThumb} />
+                            historical
+                              ? <HistoricalLogPhoto key={i} uri={uri} />
+                              : <Image key={i} source={{ uri }} style={styles.logPhotoThumb} />
                           ))}
                         </ScrollView>
                       )}
@@ -1086,6 +1099,7 @@ const styles = StyleSheet.create({
   logEntryTime: { fontFamily: F.body, fontSize: 13, color: C.textFaint },
   logPhotoScroll: { marginBottom: S.sm, maxHeight: 80 },
   logPhotoThumb: { width: 72, height: 72, borderRadius: 8, marginRight: 6 },
+  logPhotoPlaceholder: { backgroundColor: C.linenDeep },
   logEntryNotes: { fontFamily: F.body, fontSize: 14, color: C.textBody, lineHeight: 20 },
 
   logButtons: { gap: S.sm },

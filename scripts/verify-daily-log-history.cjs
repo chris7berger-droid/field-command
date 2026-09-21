@@ -17,10 +17,10 @@ const histSrc = fs.readFileSync(histPath, 'utf8')
 
 const sandbox = { module: { exports: {} }, exports: {}, console };
 vm.runInNewContext(
-  `${utilsSrc}\n${histSrc}\nmodule.exports = { dailyLogWorkDates, dailyLogEntriesOnDate, dailyLogEntriesForPeriod, adjacentLogDate, createdOnLocalYmd, localYmd };`,
+  `${utilsSrc}\n${histSrc}\nmodule.exports = { dailyLogWorkDates, dailyLogEntriesOnDate, dailyLogEntriesForPeriod, adjacentLogDate, createdOnLocalYmd, localYmd, parseJSONArray };`,
   sandbox
 );
-const { dailyLogWorkDates, dailyLogEntriesOnDate, dailyLogEntriesForPeriod, adjacentLogDate } = sandbox.module.exports;
+const { dailyLogWorkDates, dailyLogEntriesOnDate, dailyLogEntriesForPeriod, adjacentLogDate, parseJSONArray } = sandbox.module.exports;
 
 let failed = 0;
 function check(name, fn) {
@@ -144,9 +144,22 @@ check('historical cards stay read-only (type, time, notes, photos)', () => {
   assert.ok(hist.includes('entry.entry_type'));
   assert.ok(hist.includes('formatLogSubmittedAt(entry)'));
   assert.ok(hist.includes('entry.notes'));
-  assert.ok(hist.includes('parseJSON(entry.photos, [])'));
+  assert.ok(hist.includes('parseJSONArray(entry.photos, [])'));
+  assert.ok(!hist.includes('parseJSON(entry.photos, [])'));
+  assert.ok(hist.includes('historical'));
+  assert.ok(hist.includes('HistoricalLogPhoto'));
+  assert.ok(tabSrc.includes('requestAnimationFrame(() => setMounted(true))'));
   assert.ok(!hist.includes('onPress'));
   assert.ok(!hist.includes('TextInput'));
+});
+
+check('double-encoded photos parse to URL strings, not a mappable string', () => {
+  const double = JSON.stringify(JSON.stringify(['https://example.test/sod.jpg']));
+  const photos = parseJSONArray(double, []);
+  assert.ok(Array.isArray(photos));
+  assert.strictEqual(typeof photos, 'object');
+  assert.strictEqual(photos.length, 1);
+  assert.strictEqual(photos[0], 'https://example.test/sod.jpg');
 });
 
 check('today composer, clock-out gating, and Home dots are unchanged', () => {
