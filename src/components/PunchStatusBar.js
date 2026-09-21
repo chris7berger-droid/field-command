@@ -14,7 +14,7 @@ import { View, Text, StyleSheet, Animated, Easing, TouchableOpacity, Alert } fro
 import { useQuery, usePowerSync } from '@powersync/react';
 import { C, F, S } from '../lib/tokens';
 import { tod } from '../lib/utils';
-import { getCurrentPosition } from '../lib/location';
+import { getClockInPosition } from '../lib/location';
 import { fetchWeather } from '../lib/weather';
 import { requireCanonicalTeamMemberId, isMissingTeamMemberIdError } from '../lib/activation';
 import { entryWorkDate } from '../lib/dailyLogHistory';
@@ -141,37 +141,40 @@ export default function PunchStatusBar() {
     let lng = null;
     let onSite = 0;
     let gpsOverride = 1;
-    let weather = null;
+    let weatherPromise = Promise.resolve(null);
     try {
-      const pos = await getCurrentPosition();
+      const pos = await getClockInPosition();
       lat = pos.latitude;
       lng = pos.longitude;
       gpsOverride = 0;
       onSite = 1;
-      weather = await fetchWeather(lat, lng);
+      weatherPromise = fetchWeather(lat, lng);
     } catch {
       // Still clock out. They're fixing a missed punch, not starting a shift.
     }
+    let punchId = null;
     try {
       const actorId = requireCanonicalTeamMemberId(openPunch.employee_id, 'time punch write');
       const stamp = new Date().toISOString();
+      punchId = generateId();
       await db.execute(
         `INSERT INTO time_punches (id, job_id, employee_id, punch_type, punch_time, punch_date,
           latitude, longitude, on_site, gps_override, weather_temp, weather_condition, synced, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
         [
-          generateId(),
+          punchId,
           openPunch.job_id,
           actorId,
           'clock_out',
           stamp,
           today,
           lat, lng, onSite, gpsOverride,
-          weather?.temp_f || null, weather?.condition || null,
+          null, null,
           stamp,
         ]
       );
     } catch (e) {
+      punchId = null;
       if (isMissingTeamMemberIdError(e)) {
         Alert.alert('Field Command not active', 'Your account is not activated for Field Command.');
       } else {
@@ -180,6 +183,15 @@ export default function PunchStatusBar() {
     } finally {
       setBusy(false);
     }
+    weatherPromise
+      .then((weatherData) => {
+        if (!punchId || !weatherData) return;
+        return db.execute(
+          `UPDATE time_punches SET weather_temp=?, weather_condition=?, synced=0 WHERE id=?`,
+          [weatherData.temp_f, weatherData.condition, punchId]
+        );
+      })
+      .catch(() => {});
   }, [openPunch, busy, db, today]);
 
   const chooseNightWork = useCallback(() => {
