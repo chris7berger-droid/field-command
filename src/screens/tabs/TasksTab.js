@@ -555,7 +555,13 @@ export default function TasksTab({ jobId, employeeId, employeeName }) {
                             <Text style={styles.matQtyNum}>{qty > 0 ? qty : '—'}</Text>
                             {mat.kit_size ? <Text style={styles.matQtyUnit}>{mat.kit_size}</Text> : null}
                           </View>
-                          <Text style={styles.chevron}>{specs.length ? (expanded ? '▾' : '▸') : ''}</Text>
+                          {specs.length ? (
+                            <View style={styles.expandBtn}>
+                              <Text style={styles.expandBtnText}>{expanded ? 'CLOSE' : 'OPEN'}</Text>
+                            </View>
+                          ) : (
+                            <View style={styles.expandBtnSpacer} />
+                          )}
                         </TouchableOpacity>
                       </View>
                       {expanded && specs.length > 0 && (
@@ -647,7 +653,7 @@ const styles = StyleSheet.create({
   matTable: { backgroundColor: C.linenCard, borderRadius: 10, borderWidth: 1, borderColor: C.borderStrong, overflow: 'hidden' },
   matHeadRow: { flexDirection: 'row', backgroundColor: C.dark, paddingVertical: 8, paddingHorizontal: S.md },
   matHeadCell: { fontFamily: F.display, fontSize: 11, color: C.textFaint, letterSpacing: 1.5 },
-  matChevCol: { width: 24, textAlign: 'center' },
+  matChevCol: { width: 76, textAlign: 'center' },
   matItem: { borderTopWidth: 1, borderTopColor: C.border },
   matRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: S.md },
   matRowBody: { flex: 1, flexDirection: 'row', alignItems: 'center' },
@@ -659,7 +665,13 @@ const styles = StyleSheet.create({
   matNameChecked: { color: C.textFaint, textDecorationLine: 'line-through' },
   matQtyNum: { fontFamily: F.display, fontSize: 16, color: C.textHead },
   matQtyUnit: { fontFamily: F.body, fontSize: 11, color: C.textLight, marginTop: -1 },
-  chevron: { width: 24, textAlign: 'center', fontFamily: F.body, fontSize: 14, color: C.textMuted },
+  expandBtn: {
+    backgroundColor: C.dark, borderRadius: 8, minHeight: 36, minWidth: 76,
+    paddingHorizontal: 10, paddingVertical: 8,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  expandBtnSpacer: { width: 76, height: 36 },
+  expandBtnText: { fontFamily: F.display, fontSize: 13, color: C.teal, letterSpacing: 1 },
   specBlock: { paddingHorizontal: S.md, paddingTop: 2, paddingBottom: 10, backgroundColor: C.linenDeep },
   specRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', paddingVertical: 3 },
   specLabel: { fontFamily: F.display, fontSize: 11, color: C.textMuted, letterSpacing: 1 },
