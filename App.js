@@ -276,7 +276,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     alignItems: 'center',
     paddingHorizontal: S.md,
-    paddingBottom: 4,
+    paddingBottom: 8,
   },
   loading: {
     flex: 1,

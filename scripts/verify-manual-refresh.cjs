@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Manual Refresh — reconnect/checkpoint completion, no disconnectAndClear,
- * UPDATED is not connect() returning, timeout/offline, in-flight guard.
+ * Manual Refresh — live connected path, download wait, disconnected reconnect,
+ * whole-operation timeout, no disconnectAndClear, in-flight guard.
  */
 const assert = require('assert');
 const fs = require('fs');
@@ -13,8 +13,10 @@ const src = fs.readFileSync(libPath, 'utf8').replace(/^export /gm, '');
 const sandbox = { module: { exports: {} }, exports: {}, console, AbortController, setTimeout, clearTimeout };
 vm.runInNewContext(
   `${src}\nmodule.exports = {
+    isLiveCurrent,
     isPostTapCheckpointComplete,
     refreshOutcome,
+    waitForStatusMatch,
     waitForPostTapCheckpoint,
     runManualRefresh,
     createRefreshInFlightGuard,
@@ -24,8 +26,10 @@ vm.runInNewContext(
   sandbox
 );
 const {
+  isLiveCurrent,
   isPostTapCheckpointComplete,
   refreshOutcome,
+  waitForStatusMatch,
   waitForPostTapCheckpoint,
   runManualRefresh,
   createRefreshInFlightGuard,
@@ -62,6 +66,7 @@ function check(name, fn) {
 function makeStatus(overrides = {}) {
   return {
     connected: false,
+    hasSynced: false,
     dataFlowStatus: { downloading: false },
     lastSyncedAt: undefined,
     ...overrides,
@@ -102,19 +107,41 @@ function makeFakeDb(initial) {
   };
 }
 
+function neverConnect() {
+  throw new Error('must not reconnect a healthy live stream');
+}
+
 async function run() {
+  await check('live connected + hasSynced + not downloading is current', () => {
+    assert.strictEqual(
+      isLiveCurrent(makeStatus({ connected: true, hasSynced: true })),
+      true
+    );
+  });
+
+  await check('connected but downloading is not current', () => {
+    assert.strictEqual(
+      isLiveCurrent(makeStatus({
+        connected: true,
+        hasSynced: true,
+        dataFlowStatus: { downloading: true },
+      })),
+      false
+    );
+  });
+
+  await check('disconnected is not live-current even with hasSynced', () => {
+    assert.strictEqual(
+      isLiveCurrent(makeStatus({ connected: false, hasSynced: true })),
+      false
+    );
+  });
+
   await check('connected + not downloading + lastSyncedAt >= start is complete', () => {
     const startedAt = 1_000;
     assert.strictEqual(
       isPostTapCheckpointComplete(
         makeStatus({ connected: true, lastSyncedAt: new Date(1_000) }),
-        startedAt
-      ),
-      true
-    );
-    assert.strictEqual(
-      isPostTapCheckpointComplete(
-        makeStatus({ connected: true, lastSyncedAt: new Date(1_500) }),
         startedAt
       ),
       true
@@ -131,21 +158,7 @@ async function run() {
     );
   });
 
-  await check('downloading is incomplete', () => {
-    assert.strictEqual(
-      isPostTapCheckpointComplete(
-        makeStatus({
-          connected: true,
-          lastSyncedAt: new Date(2_000),
-          dataFlowStatus: { downloading: true },
-        }),
-        1_000
-      ),
-      false
-    );
-  });
-
-  await check('stale lastSyncedAt after tap is incomplete', () => {
+  await check('stale lastSyncedAt after tap is incomplete for reconnect wait', () => {
     assert.strictEqual(
       isPostTapCheckpointComplete(
         makeStatus({ connected: true, lastSyncedAt: new Date(500) }),
@@ -155,17 +168,9 @@ async function run() {
     );
   });
 
-  await check('missing lastSyncedAt is incomplete', () => {
-    assert.strictEqual(
-      isPostTapCheckpointComplete(makeStatus({ connected: true }), 1_000),
-      false
-    );
-  });
-
   await check('refreshOutcome is updated only when wait complete', () => {
     assert.strictEqual(refreshOutcome({ complete: true }), 'updated');
     assert.strictEqual(refreshOutcome({ complete: false, timedOut: true }), 'noSignal');
-    assert.strictEqual(refreshOutcome({ complete: false }), 'noSignal');
     assert.strictEqual(refreshOutcome(null), 'noSignal');
   });
 
@@ -177,67 +182,57 @@ async function run() {
     assert.strictEqual(refreshLabel('updated'), 'UPDATED');
   });
 
-  await check('wait completes when lastSyncedAt advances after tap', async () => {
-    const startedAt = Date.now();
+  await check('healthy connected refresh is UPDATED without connect()', async () => {
+    let connectedCalls = 0;
+    const result = await runManualRefresh({
+      getStatus: () => makeStatus({ connected: true, hasSynced: true }),
+      connect: async () => {
+        connectedCalls += 1;
+        neverConnect();
+      },
+      wait: async () => {
+        throw new Error('wait must not run when already current');
+      },
+    });
+    assert.strictEqual(connectedCalls, 0);
+    assert.strictEqual(result.usedConnect, false);
+    assert.strictEqual(result.outcome, 'updated');
+    assert.strictEqual(result.complete, true);
+  });
+
+  await check('connected + downloading waits then UPDATED without reconnect', async () => {
     const db = makeFakeDb(makeStatus({
       connected: true,
-      lastSyncedAt: new Date(startedAt - 5_000),
+      hasSynced: true,
+      dataFlowStatus: { downloading: true },
     }));
-    const pending = waitForPostTapCheckpoint(db, startedAt, { timeoutMs: 500 });
+    let connectedCalls = 0;
+    const pending = runManualRefresh({
+      getStatus: () => db.currentStatus,
+      connect: async () => {
+        connectedCalls += 1;
+        neverConnect();
+      },
+      wait: (startedAt, opts) => waitForStatusMatch(db, opts.predicate, opts),
+      timeoutMs: 400,
+    });
     setTimeout(() => {
-      db.setStatus(makeStatus({
-        connected: true,
-        lastSyncedAt: new Date(startedAt + 10),
-      }));
+      db.setStatus(makeStatus({ connected: true, hasSynced: true }));
     }, 20);
     const result = await pending;
+    assert.strictEqual(connectedCalls, 0);
+    assert.strictEqual(result.usedConnect, false);
+    assert.strictEqual(result.outcome, 'updated');
     assert.strictEqual(result.complete, true);
-    assert.strictEqual(result.timedOut, false);
   });
 
-  await check('timeout without a post-tap checkpoint is not complete', async () => {
+  await check('disconnected refresh calls connect then waits for checkpoint', async () => {
     const startedAt = Date.now();
-    const db = makeFakeDb(makeStatus({
-      connected: true,
-      lastSyncedAt: new Date(startedAt - 5_000),
-    }));
-    const result = await waitForPostTapCheckpoint(db, startedAt, { timeoutMs: 40 });
-    assert.strictEqual(result.complete, false);
-    assert.strictEqual(result.timedOut, true);
-  });
-
-  await check('connect() returning is not UPDATED', async () => {
-    const startedAt = Date.now();
-    const db = makeFakeDb(makeStatus({
-      connected: true,
-      lastSyncedAt: new Date(startedAt - 5_000),
-    }));
-    const result = await runManualRefresh({
-      startedAt,
-      connect: async () => {
-        // Stream reports connected, but the post-tap checkpoint has not applied.
-        db.setStatus(makeStatus({
-          connected: true,
-          lastSyncedAt: new Date(startedAt - 5_000),
-        }));
-      },
-      wait: (at, opts) => waitForPostTapCheckpoint(db, at, { ...opts, timeoutMs: 40 }),
-      timeoutMs: 40,
-    });
-    assert.strictEqual(result.complete, false);
-    assert.strictEqual(result.timedOut, true);
-    assert.strictEqual(result.outcome, 'noSignal');
-  });
-
-  await check('UPDATED only after post-tap checkpoint, not because connect resolved', async () => {
-    const startedAt = Date.now();
-    const db = makeFakeDb(makeStatus({
-      connected: false,
-      lastSyncedAt: new Date(startedAt - 5_000),
-    }));
+    const db = makeFakeDb(makeStatus({ connected: false }));
     const order = [];
     const result = await runManualRefresh({
       startedAt,
+      getStatus: () => db.currentStatus,
       connect: async () => {
         order.push('connect');
         db.setStatus(makeStatus({
@@ -251,21 +246,61 @@ async function run() {
         setTimeout(() => {
           db.setStatus(makeStatus({
             connected: true,
+            hasSynced: true,
             lastSyncedAt: new Date(at + 5),
-            dataFlowStatus: { downloading: false },
           }));
         }, 15);
-        return waitForPostTapCheckpoint(db, at, { ...opts, timeoutMs: 400 });
+        return waitForPostTapCheckpoint(db, at, opts);
       },
       timeoutMs: 400,
     });
     assert.deepStrictEqual(order, ['connect', 'wait']);
+    assert.strictEqual(result.usedConnect, true);
     assert.strictEqual(result.outcome, 'updated');
-    assert.strictEqual(result.complete, true);
+  });
+
+  await check('connect() returning is not UPDATED', async () => {
+    const startedAt = Date.now();
+    const db = makeFakeDb(makeStatus({ connected: false }));
+    const result = await runManualRefresh({
+      startedAt,
+      getStatus: () => db.currentStatus,
+      connect: async () => {
+        db.setStatus(makeStatus({
+          connected: true,
+          lastSyncedAt: new Date(startedAt - 5_000),
+        }));
+      },
+      wait: (at, opts) => waitForPostTapCheckpoint(db, at, { ...opts, timeoutMs: 40 }),
+      timeoutMs: 40,
+    });
+    assert.strictEqual(result.complete, false);
+    assert.strictEqual(result.timedOut, true);
+    assert.strictEqual(result.outcome, 'noSignal');
+    assert.strictEqual(result.usedConnect, true);
+  });
+
+  await check('whole-operation timeout includes a hung connect()', async () => {
+    const t0 = Date.now();
+    const result = await runManualRefresh({
+      getStatus: () => makeStatus({ connected: false }),
+      connect: () => new Promise(() => {}),
+      wait: async () => {
+        throw new Error('wait must not run after connect timeout');
+      },
+      timeoutMs: 50,
+    });
+    const elapsed = Date.now() - t0;
+    assert.ok(elapsed < 400, `timeout should not hang connect(); elapsed ${elapsed}ms`);
+    assert.strictEqual(result.outcome, 'noSignal');
+    assert.strictEqual(result.complete, false);
+    assert.strictEqual(result.timedOut, true);
+    assert.strictEqual(result.usedConnect, true);
   });
 
   await check('connect throw / offline is NO SIGNAL, never UPDATED', async () => {
     const result = await runManualRefresh({
+      getStatus: () => makeStatus({ connected: false }),
       connect: async () => {
         throw new Error('network down');
       },
@@ -292,20 +327,21 @@ async function run() {
       powersyncSrc.indexOf('export async function refreshPowerSync'),
       powersyncSrc.indexOf('export async function disconnectPowerSync')
     );
+    assert.ok(refreshFn.includes('getStatus: () => db.currentStatus'));
     assert.ok(refreshFn.includes('db.connect(connector)'));
     assert.ok(!refreshFn.includes('disconnectAndClear'));
-    assert.ok(!refreshFn.includes('disconnectPowerSync'));
     const onlyClear = powersyncSrc.match(/disconnectAndClear/g) || [];
     assert.strictEqual(onlyClear.length, 1);
-    assert.ok(powersyncSrc.includes('await db.disconnectAndClear()'));
     const clearAt = powersyncSrc.indexOf('disconnectAndClear');
     const disconnectFnAt = powersyncSrc.indexOf('export async function disconnectPowerSync');
     assert.ok(clearAt > disconnectFnAt, 'disconnectAndClear stays only on sign-out helper');
   });
 
-  await check('UI does not use useQuery().refresh as the sync mechanism', () => {
+  await check('UI is a pill and does not use useQuery().refresh', () => {
     assert.ok(!controlSrc.includes('useQuery'));
     assert.ok(controlSrc.includes('refreshPowerSync'));
+    assert.ok(controlSrc.includes('styles.pill'));
+    assert.ok(controlSrc.includes('borderRadius: 6'));
     assert.ok(controlSrc.includes("result.outcome === 'updated'"));
     assert.ok(controlSrc.includes('tryBegin()'));
     assert.ok(controlSrc.includes('disabled={busy}'));

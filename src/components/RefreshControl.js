@@ -1,11 +1,10 @@
 /**
- * Compact global REFRESH chip. Lives in authenticated app chrome, not PunchStatusBar.
- * Tapping asks PowerSync for a new session/checkpoint. Local watched queries
- * pick up any new rows on their own.
+ * Compact global REFRESH pill. Lives in authenticated app chrome, not PunchStatusBar.
+ * A live PowerSync session is not torn down; local watched queries update on their own.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { C, F, S } from '../lib/tokens';
+import { C, F } from '../lib/tokens';
 import { refreshPowerSync } from '../lib/powersync';
 import {
   UPDATED_HOLD_MS,
@@ -39,31 +38,37 @@ export default function RefreshControl() {
   }, []);
 
   const busy = phase === REFRESH_PHASE.refreshing;
-  const color = phase === REFRESH_PHASE.noSignal ? C.amber : C.teal;
+  const noSignal = phase === REFRESH_PHASE.noSignal;
+  const accent = noSignal ? C.amber : C.teal;
 
   return (
     <TouchableOpacity
-      style={styles.btn}
+      style={[styles.pill, { borderColor: accent }]}
       onPress={onPress}
       activeOpacity={0.7}
       disabled={busy}
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       accessibilityRole="button"
       accessibilityLabel="Refresh"
       accessibilityState={{ busy, disabled: busy }}
     >
-      <Text style={[styles.label, { color }]}>{refreshLabel(phase)}</Text>
+      <Text style={[styles.label, { color: accent }]}>{refreshLabel(phase)}</Text>
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  btn: {
-    paddingVertical: 4,
-    paddingHorizontal: S.sm,
+  pill: {
+    backgroundColor: C.darkRaised,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    alignItems: 'center',
   },
   label: {
     fontFamily: F.display,
-    fontSize: 12,
+    fontSize: 13,
     letterSpacing: 1.5,
   },
 });
