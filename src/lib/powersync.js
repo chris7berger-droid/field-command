@@ -14,6 +14,7 @@ import {
 
 let _db = null;
 let _connector = null;
+let _connectInFlight = null;
 
 export function getPowerSync() {
   if (!_db) {
@@ -38,12 +39,19 @@ export function getConnector() {
 
 /**
  * Call after successful auth to start syncing.
+ * Concurrent callers share one in-flight db.connect() — the SDK tears down
+ * the stream on every connect(), so App.js must not overlap those calls.
  */
 export async function connectPowerSync() {
+  if (_connectInFlight) return _connectInFlight;
   const db = getPowerSync();
   const connector = getConnector();
-  await db.connect(connector);
-  return db;
+  _connectInFlight = db.connect(connector)
+    .then(() => db)
+    .finally(() => {
+      _connectInFlight = null;
+    });
+  return _connectInFlight;
 }
 
 /**

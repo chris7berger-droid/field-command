@@ -5,7 +5,7 @@
  * PowerSync for offline-first data, Supabase for auth.
  */
 import '@azure/core-asynciterator-polyfill';
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
+  AppState,
 } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -33,6 +34,10 @@ import {
 import { C, F, S } from './src/lib/tokens';
 import { supabase } from './src/lib/supabase';
 import { getPowerSync, connectPowerSync } from './src/lib/powersync';
+import {
+  shouldEnsurePowerSyncConnect,
+  POWERSYNC_ENSURE_COOLDOWN_MS,
+} from './src/lib/powerSyncLifecycle';
 import { evaluateFieldActivation } from './src/lib/activation';
 import PunchStatusBar from './src/components/PunchStatusBar';
 import RefreshControl from './src/components/RefreshControl';
@@ -54,7 +59,6 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [accessBlocked, setAccessBlocked] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
-  const connectedRef = useRef(false);
 
   const [fontsLoaded] = useFonts({
     Barlow_400Regular,
@@ -71,17 +75,68 @@ export default function App() {
     db.init().then(() => setDbReady(true));
   }, []);
 
-  // ── Connect PowerSync once the DB is ready AND we have a session ──
-  // Covers BOTH fresh login and a restored session on cold start. Without
-  // this, a persisted session renders the authenticated UI but never
-  // connects the sync engine, leaving the app permanently "Offline" on
-  // every relaunch (crew devices cold-start with a saved session).
+  // ── Keep PowerSync connected while authenticated ──
+  // First connect on login / cold start (same as before). If the stream later
+  // dies to connected:false && connecting:false, restore it here — App.js owns
+  // that lifecycle. Skip while the SDK is already connecting/retrying.
+  // Local SQLite stays readable either way.
+  // Gate on a boolean so TOKEN_REFRESHED (new session object) does not remount
+  // this owner and call connect() on a live stream.
+  const canConnect = Boolean(dbReady && session && user);
   useEffect(() => {
-    if (dbReady && session && user && !connectedRef.current) {
-      connectedRef.current = true;
-      connectPowerSync().catch(console.error);
-    }
-  }, [dbReady, session, user]);
+    if (!canConnect) return undefined;
+
+    let cancelled = false;
+    let inFlight = false;
+    let cooldownUntil = 0;
+    let wakeup = null;
+
+    const scheduleWakeup = (delayMs) => {
+      if (cancelled || wakeup) return;
+      wakeup = setTimeout(() => {
+        wakeup = null;
+        ensure();
+      }, delayMs);
+    };
+
+    const ensure = () => {
+      if (cancelled) return;
+      if (!shouldEnsurePowerSyncConnect(db.currentStatus, {
+        inFlight,
+        cooldownUntil,
+        now: Date.now(),
+      })) return;
+      inFlight = true;
+      connectPowerSync()
+        .catch(console.error)
+        .finally(() => {
+          inFlight = false;
+          if (cancelled) return;
+          const status = db.currentStatus;
+          if (status?.connected) {
+            cooldownUntil = 0;
+            return;
+          }
+          cooldownUntil = Date.now() + POWERSYNC_ENSURE_COOLDOWN_MS;
+          scheduleWakeup(POWERSYNC_ENSURE_COOLDOWN_MS);
+        });
+    };
+
+    ensure();
+    const unsub = db.registerListener({
+      statusChanged: () => ensure(),
+    });
+    const appSub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') ensure();
+    });
+
+    return () => {
+      cancelled = true;
+      if (wakeup) clearTimeout(wakeup);
+      unsub?.();
+      appSub?.remove();
+    };
+  }, [canConnect]);
 
   // ── Check existing session on mount ───────────────────
   useEffect(() => {
@@ -101,7 +156,6 @@ export default function App() {
       } else {
         setUser(null);
         setAccessBlocked(false);
-        connectedRef.current = false; // allow reconnect on next login
         setCheckingAuth(false);
       }
     });
