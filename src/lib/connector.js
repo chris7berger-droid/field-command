@@ -81,6 +81,16 @@ export class SupabaseConnector {
       error,
     } = await this.client.auth.getSession();
 
+    const jwt = typeof session?.access_token === 'string' ? session.access_token : '';
+    const expiresAt = session?.expires_at ? new Date(session.expires_at * 1000) : null;
+    console.log('[ps-diag] fetchCredentials', {
+      sessionPresent: !!session,
+      authError: error?.message || null,
+      jwtLength: jwt.length,
+      expiresAt: expiresAt ? expiresAt.toISOString() : null,
+      now: new Date().toISOString(),
+    });
+
     if (!session || error) {
       throw new Error(
         `Could not fetch Supabase credentials: ${error?.message || 'no session'}`
@@ -98,7 +108,17 @@ export class SupabaseConnector {
 
   async uploadData(database) {
     const transaction = await database.getNextCrudTransaction();
-    if (!transaction) return;
+    if (!transaction) {
+      console.log('[ps-diag] uploadData: no transaction');
+      return;
+    }
+
+    // TEMPORARY diagnostic interlock: never upload or complete queued CRUD.
+    console.log(
+      '[ps-diag] uploadData BLOCKED queued CRUD — not sent, not completed',
+      (transaction.crud || []).map((op) => ({ table: op.table, op: op.op }))
+    );
+    return;
 
     let lastOp = null;
     try {

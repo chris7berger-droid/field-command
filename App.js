@@ -90,6 +90,7 @@ export default function App() {
     let inFlight = false;
     let cooldownUntil = 0;
     let wakeup = null;
+    let diagFirstConnectAt = null;
 
     const clearWakeup = () => {
       if (!wakeup) return;
@@ -107,11 +108,23 @@ export default function App() {
 
     const ensure = () => {
       if (cancelled) return;
+      const now = Date.now();
       const status = db.currentStatus;
       const action = nextEnsureAction(status, {
         inFlight,
         cooldownUntil,
-        now: Date.now(),
+        now,
+      });
+      const anotherConnectWithinFirstSecond = action.type === 'connect'
+        && diagFirstConnectAt != null
+        && (now - diagFirstConnectAt) < 1000;
+      console.log('[ps-diag] ensure', {
+        ts: new Date(now).toISOString(),
+        action: action.type,
+        wakeupDelayMs: action.type === 'wakeup' ? action.delayMs : null,
+        inFlight,
+        cooldownUntil,
+        anotherConnectWithinFirstSecond,
       });
       if (action.type === 'wakeup') {
         scheduleWakeup(action.delayMs);
@@ -125,6 +138,14 @@ export default function App() {
         return;
       }
       clearWakeup();
+      if (diagFirstConnectAt == null) diagFirstConnectAt = now;
+      console.log('[ps-diag] connectPowerSync call', {
+        ts: new Date(now).toISOString(),
+        inFlight,
+        cooldownUntil,
+        anotherConnectWithinFirstSecond,
+        msSinceFirstConnectRequest: now - diagFirstConnectAt,
+      });
       inFlight = true;
       connectPowerSync()
         .catch(console.error)
